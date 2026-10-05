@@ -3,6 +3,7 @@
   "loading_order": 50,
   "js": "index.js",
   "author": "fuli233i",
+  "copyright": "© 2026 fuli233i · 保留所有权利（未经许可请勿转载 / 商用）",
   "version": "1.0.0",
   "homePage": "https://github.com/fuli233i/visual-mvu-panel",
   "auto_update": false,

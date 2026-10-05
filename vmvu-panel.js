@@ -1,5 +1,6 @@
 /* ============================================================
  *  可视化 MVU 面板 · 核心逻辑（不含样式，样式见 vmvu-style.css）
+ *  © 2026 fuli233i · 保留所有权利（未经许可请勿转载 / 商用）
  *  两种运行方式：
  *    1) 嵌入酒馆主页面（扩展注入）：VMVU.init(root, {messageId}) —— 直接用全局 TavernHelper 读写变量
  *    2) 独立打开预览：自动挂到 #vmvu-root，用内置示例数据
@@ -14,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.9';
+  var BUILD = '2026-10-05.10';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -3643,7 +3644,10 @@ var TRASH_SVG =
       { id: 'layout', label: '布局',     build: buildLayoutTab },
       { id: 'io',     label: '导入 / 导出', build: buildIo },
       { id: 'danger', label: '危险操作', build: buildDanger }
-    ], [btn('关闭', 'ghost', closeModal)], 'panel');
+    ], [
+      el('div', 'vm-copy', '© 2026 fuli233i · 保留所有权利（未经许可请勿转载 / 商用）'),
+      btn('关闭', 'ghost', closeModal)
+    ], 'panel');
   }
 
   /* ---------------- 对外接口 ---------------- */

@@ -1,5 +1,6 @@
 /* ============================================================
  *  可视化 MVU 面板 · Anthropic 风格
+ *  © 2026 fuli233i · 保留所有权利（未经许可请勿转载 / 商用）
  *  - 米白 / 炭黑底色，克制的分隔线，无渐变按钮
  *  - 设置面板分页，不再全都摊在一个平面
  * ============================================================ */
@@ -422,6 +423,12 @@ body.vm-page { background: #07070a; min-height: 100vh; }
   display: flex; gap: 8px; justify-content: flex-end;
   padding: 12px 18px; flex: 0 0 auto;
   border-top: 1px solid var(--vm-glass-border);
+}
+/* 弹窗底部的版权行：靠左、小字、不抢按钮 */
+.vm-modal-foot .vm-copy {
+  margin-right: auto; align-self: center;
+  font-size: 11px; line-height: 1.4; letter-spacing: 0.2px;
+  color: var(--vm-text-faint); max-width: 62%;
 }
 
 /* ---------------- 设置分页 ---------------- */
