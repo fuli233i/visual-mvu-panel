@@ -1,0 +1,13 @@
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 打包临时
+*.zip
+!.gitignore
