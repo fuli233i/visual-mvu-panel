@@ -222,6 +222,82 @@
     mes.__vmvuMasked = text.querySelectorAll('.' + HIDDEN_CLASS + ', .' + TRIGGER_CLASS).length;
   }
 
+  /* ---------------- 让酒馆在「渲染之前」就把指令块删掉 ----------------
+   *
+   * 为什么非走这条路不可：
+   *   酒馆渲染消息时会先过一遍 DOMPurify，而 <UpdateVariable> / <JSONPatch>
+   *   这类「未知标签」会被**剥掉外壳、只留下里面的文字**（那段 JSON、那段说明）。
+   *   也就是说等它进了 DOM，已经看不出「这里原本是一块指令」了 ——
+   *   光靠前端扫 DOM 只能藏住 {visual-mvu: …} 这种纯文本标记，
+   *   标签块的内容照样露在外面。
+   *
+   *   角色卡自带的「正则」就是干这件事的（[隐藏]变量更新命令 之类）。
+   *   没有卡帮忙的聊天，由本扩展往酒馆的正则表里登记一条同样的规则。
+   *
+   * 两个要点：
+   *   · 规则只在「格式显示」时生效（markdownOnly），所以界面上干净，
+   *     而发给模型的历史原文一个字都不动 —— AI 还能照着模仿这套格式。
+   *   · 判定用「正经 HTML 之外的标签」，不写死卡的名字：
+   *     换张卡、换个标签名都照样管用，仓库里也不用留别人的专有名字。
+   */
+  var HIDE_REGEX_NAME = '可视化MVU面板 · 隐藏指令块';
+  var HIDE_REGEX_FLAG = '__vmvuHide';      /* 打个记号，方便认出这是本扩展登记的 */
+
+  function hideFindRegexSource() {
+    /* (?!…\b) 里列出所有正经 HTML 标签名，命中它们的整块不动 */
+    var notHtml = '(?!(?:' + Object.keys(HTML_TAGS).sort().join('|') + ')\\b)';
+    /* ① 未知标签的整块  ② 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
+    return '(?:' +
+      '<' + notHtml + '([A-Za-z][A-Za-z0-9_]*)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>' +
+      '|\\{\\s*visual[-\\s]?mvu\\s*(?:[:：]\\s*[^}]*)?\\}' +
+      '|\\{\\s*[:：]\\s*[^}]*[+\\-=＝][^}]*\\}' +
+      '|\\[\\s*visual[-\\s]?mvu\\s*\\]' +
+      '|<\\s*visual[-\\s]?mvu\\s*\\/?\\s*>' +
+      ')';
+  }
+  function hideFindRegexString() {
+    return '/' + hideFindRegexSource() + '/gi';
+  }
+  function isOurs(s) {
+    return !!(s && (s[HIDE_REGEX_FLAG] || s.scriptName === HIDE_REGEX_NAME));
+  }
+
+  function ensureHideRegex() {
+    try {
+      var ctx = (window.SillyTavern && window.SillyTavern.getContext)
+        ? window.SillyTavern.getContext() : null;
+      var st = ctx && ctx.extensionSettings;
+      if (!st) return false;                       /* 不是酒馆环境（比如独立预览） */
+      if (!Array.isArray(st.regex)) st.regex = [];
+      /* 已经登记过就不动它 —— 用户可能自己停用或改过，别跟他抢 */
+      if (st.regex.some(isOurs)) return true;
+      var script = {
+        id: 'vmvu-hide-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+        scriptName: HIDE_REGEX_NAME,
+        findRegex: hideFindRegexString(),
+        replaceString: '',
+        trimStrings: [],
+        placement: [2],                            /* 2 = AI 输出 */
+        disabled: false,
+        markdownOnly: true,                        /* 只改显示，不改发给模型的历史 */
+        promptOnly: false,
+        runOnEdit: false,
+        substituteRegex: 0,
+        minDepth: null,
+        maxDepth: null
+      };
+      script[HIDE_REGEX_FLAG] = true;
+      st.regex.push(script);
+      if (typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+      log('已往酒馆正则表登记「' + HIDE_REGEX_NAME + '」：渲染前删掉指令块');
+      if (Array.isArray(st.disabledExtensions) && st.disabledExtensions.indexOf('regex') >= 0) {
+        warn('酒馆的「正则」扩展当前是停用状态，这条规则不会生效 —— ' +
+             '前端自己那层隐藏还在，但 <UpdateVariable> 这类块的内容会露出来。请启用「正则」扩展。');
+      }
+      return true;
+    } catch (e) { warn('登记隐藏指令块的正则失败', e); return false; }
+  }
+
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
       var s = document.createElement('script');
@@ -497,6 +573,8 @@
         if (!et[k]) return;
         try {
           es.on(et[k], function () {
+            /* 设置/正则表是酒馆加载完才齐的，顺手补一次登记（幂等，登记过就直接返回） */
+            if (k === 'CHAT_CHANGED') ensureHideRegex();
             /* 换了聊天：布局是「每个聊天一套」，说明要按新布局重新注入 */
             if (k === 'CHAT_CHANGED' && window.VMVU && window.VMVU.applyPrompt) {
               try { window.VMVU.applyPrompt(); } catch (e) {}
@@ -576,6 +654,7 @@
     if (!window.VMVU) { warn('面板脚本加载了但没挂上 window.VMVU'); return; }
 
     bindEvents();
+    ensureHideRegex();
 
     /* 初次渲染 + 轮询兜底（应对各种加载顺序） */
     var tries = 0;

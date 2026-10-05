@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.21';
+  var BUILD = '2026-10-05.22';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
