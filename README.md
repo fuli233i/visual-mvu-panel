@@ -198,7 +198,6 @@ visual-mvu-panel/
 ├─ index.js          入口：识别触发标记，把面板挂到对应楼层
 ├─ vmvu-panel.js     面板核心（拖拽 / 设置 / MVU 读写 / 说明注入）
 ├─ vmvu-style.css    样式
-├─ LICENSE           MIT 许可
 └─ README.md         这份说明
 ```
 
@@ -218,9 +217,10 @@ visual-mvu-panel/
 
 ---
 
-## 许可
+## 使用说明
 
-**MIT License** —— 随便用、随便改、随便分发，保留版权声明即可。全文见 [LICENSE](LICENSE)。
+未附开源许可，**默认保留所有权利**：自己装着用、自己改自己那份都没问题；
+转载、分发或商业用途请先联系作者。
 
 ---
 
