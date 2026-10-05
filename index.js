@@ -98,20 +98,18 @@
      改成一次扫描找标签、再去配另一半，全程 O(n)。 */
   /* 哪些标签算「给 AI / 程序看的指令」要整块藏掉？
    *
-   * 这条规则翻车过三次，所以现在是保守的三层：
-   *   ① HIDE_TAG_ALWAYS：MVU 生态的标准指令标签，**无条件**藏。
-   *      这几个绝不会是正文容器，放心删。
-   *   ② HIDE_TAG_MAYBE + 「名字带下划线」：这类只有**这张卡自己没管**才藏。
-   *      （踩过的坑：有卡把整段正文包在 <game>…</game> 里；
-   *        这次又踩了：有卡把正文包在 <LILY_STORY>…</LILY_STORY> 里，
-   *        然后用自己的正则把它美化成面板 —— 我们再删就等于把正文吞了。）
-   *   ③ 卡自己的「显示用正则」里点名过的标签，一律不碰。
-   *      卡既然写了针对它的正则，说明这个标签归它管（正文容器、美化面板、CG 渲染都是这种）。
+   * 这条规则翻车过三次（<game> 正文容器、<LILY_STORY> 正文容器、<fox_selc> 选项块），
+   * 每一次都是「靠猜」猜错的。所以现在**不猜了**，只认两件事：
    *
-   * 判断「卡管了哪些标签」的办法：读这张卡 regex_scripts 里所有会影响显示的规则，
+   *   ① 名字必须出现在下面这份名单里（都是确定的指令标签）。
+   *      名单外的一律不碰 —— 就算它带下划线、就算它不是正经 HTML。
+   *   ② 这张卡自己**没管**它。卡既然写了针对某个标签的显示正则，
+   *      就说明这标签归卡管：正文容器、美化面板、CG 渲染、状态栏全是这一类。
+   *
+   * 判断「卡管了哪些标签」：读当前角色 regex_scripts 里会影响显示的规则，
    * 把出现在 findRegex 里的标签名收集起来。 */
-  var HIDE_TAG_ALWAYS = ['updatevariable', 'jsonpatch', 'statusplaceholderimpl', 'analysis'];
-  var HIDE_TAG_MAYBE = ['disclaimer', 'think', 'thinking', 'reasoning', 'cot', 'scratchpad'];
+  var HIDE_TAG_NAMES = ['updatevariable', 'jsonpatch', 'statusplaceholderimpl', 'analysis',
+    'disclaimer', 'think', 'thinking', 'reasoning', 'cot', 'scratchpad', 'inner_monologue'];
 
   /* 这张卡自己用正则处理了哪些标签？（只算会影响显示的规则） */
   var handledCache = null, handledCacheAt = 0;
@@ -138,10 +136,9 @@
   function isInstructionTag(name, handled) {
     var n = String(name || '').toLowerCase();
     if (!n || HTML_TAGS[n]) return false;
-    if (HIDE_TAG_ALWAYS.indexOf(n) >= 0) return true;      /* ① 标准 MVU 标签 */
-    if (handled && handled[n]) return false;               /* ③ 卡自己管，别插手 */
-    if (n.indexOf('_') >= 0) return true;                  /* ② 一看就是给程序用的 */
-    return HIDE_TAG_MAYBE.indexOf(n) >= 0;
+    if (HIDE_TAG_NAMES.indexOf(n) < 0) return false;       /* ① 名单外的不碰 */
+    if (handled && handled[n]) return false;               /* ② 卡自己管，别插手 */
+    return true;
   }
 
   var ANY_TAG_RE = /<\/?([A-Za-z][A-Za-z0-9_]*)\b[^>]*>/g;
@@ -292,17 +289,13 @@
   var HIDE_REGEX_FLAG = '__vmvuHide';      /* 打个记号，方便认出这是本扩展登记的 */
 
   function hideFindRegexSource(handled) {
-    /* notHtml：正经 HTML 标签名不碰；
-       notHandled：这张卡自己用正则管过的标签名，也不碰。 */
-    var notHtml = '(?!(?:' + Object.keys(HTML_TAGS).sort().join('|') + ')\\b)';
+    /* notHandled：这张卡自己用正则管过的标签名不碰（正文容器 / 美化面板 / CG / 状态栏）。 */
     var names = Object.keys(handled || {});
     var notHandled = names.length ? ('(?!(?:' + names.join('|') + ')\\b)') : '';
-    var byMaybe = '(?:' + HIDE_TAG_MAYBE.join('|') + '|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*)';
-    /* ① 标准 MVU 指令标签（无条件删） ② 靠特征猜的（卡没管才删）
-       ③ 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
+    /* ① 名单里的指令标签（卡没管才删）
+       ② 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
     return '(?:' +
-      '<' + notHtml + '(' + HIDE_TAG_ALWAYS.join('|') + ')\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>' +
-      '|<' + notHtml + notHandled + '(' + byMaybe + ')\\b[^>]*>[\\s\\S]*?<\\/\\2\\s*>' +
+      '<' + notHandled + '(' + HIDE_TAG_NAMES.join('|') + ')\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>' +
       '|\\{\\s*visual[-\\s]?mvu\\s*(?:[:：]\\s*[^}]*)?\\}' +
       '|\\{\\s*[:：]\\s*[^}]*[+\\-=＝][^}]*\\}' +
       '|\\[\\s*visual[-\\s]?mvu\\s*\\]' +
