@@ -50,6 +50,10 @@ https://github.com/fuli233i/visual-mvu-panel
 
 `[visual-mvu]` 和 `<visual-mvu>` 也认。标记本身会被自动隐藏，不会露在正文里。
 
+AI 写给程序看的那几段（`<UpdateVariable>` / `<JSONPatch>` / `<StatusPlaceHolderImpl/>`，
+以及各张卡自己约定的自定义标签块）扩展也会顺手藏掉——**每一层都藏**，
+不依赖角色卡自带的正则。往上翻旧消息、或者流式输出到一半，都不会看见这些代码。
+
 > ⚠️ 尖括号写法在酒馆里**会被 HTML 过滤吃掉**：`<visual-mvu>` 渲染后只剩下 `visual-mvu` 几个字。
 > 扩展也认这种「裸文本」，但 `{visual-mvu}`（花括号）最稳。
 

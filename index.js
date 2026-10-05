@@ -41,6 +41,7 @@
   var TRIGGER_HINT = '{visual-mvu}';
   var HIDE_TRIGGER = true;            /* 把标记从正文里藏起来，别让它露在界面上 */
   var TRIGGER_CLASS = 'vmvu-trigger';
+  var HIDDEN_CLASS = 'vmvu-code';
 
   /* ---------------- 工具 ---------------- */
   function log() {
@@ -69,12 +70,57 @@
   /* 把正文里的标记换成隐藏 span：界面上看不见，但 textContent 里还在，
      所以下一次扫描仍然认得出这一楼该挂面板。 */
   /* MVU 的指令块：很多卡自带正则把它们藏起来，没有卡帮忙时就会原样露在正文里。
-     这里由扩展自己兜底隐藏（不动正文数据，只是不显示）。 */
-  var CODE_PATTERNS = [
-    /<UpdateVariable[\s\S]*?<\/UpdateVariable>/i,
-    /<JSONPatch[\s\S]*?<\/JSONPatch>/i,
-    /<StatusPlaceHolderImpl\s*\/?>/i
-  ];
+     这里由扩展自己兜底隐藏（不动正文数据，只是不显示）。
+
+     判定用的是「正经 HTML 之外的标签」，而不是写死的那几个名字：
+     凡是正经 HTML 里没有的标签（各张卡自己约定的 <UpdateVariable>、
+     <JSONPatch>、<StatusPlaceHolderImpl/> 之类），一律整块藏掉；
+     <p> <br> <b> <code> 这类正经 HTML 一个都不碰。
+     好处是换张卡、换个词都照样管用，不用回来改代码。 */
+  var HTML_TAGS = (function () {
+    var names = ('a abbr address area article aside audio b base bdi bdo big blockquote br button ' +
+      'canvas caption center cite code col colgroup data dd del details dfn dialog div dl dt em ' +
+      'embed fieldset figcaption figure font footer form h1 h2 h3 h4 h5 h6 head header hgroup hr ' +
+      'html i iframe img input ins kbd label legend li link main map mark menu meta meter nav ' +
+      'noscript object ol optgroup option output p param picture pre progress q rp rt ruby s samp ' +
+      'script section select slot small source span strong style sub summary sup table tbody td ' +
+      'template textarea tfoot th thead time title tr track u ul var video wbr ' +
+      /* 内联 SVG 也认（有些卡会放图标） */
+      'svg path circle rect line polyline polygon ellipse g defs use mask pattern clipPath ' +
+      'linearGradient radialGradient stop text tspan filter feGaussianBlur').split(/\s+/);
+    var set = {};
+    names.forEach(function (x) { if (x) set[x.toLowerCase()] = 1; });
+    return set;
+  })();
+
+  /* 在一段纯文本里找出「下一个该整块藏起来的东西」。
+     写法上刻意避开「先找开头再懒匹配结尾」那种回溯写法（长正文会卡），
+     改成一次扫描找标签、再去配另一半，全程 O(n)。 */
+  var ANY_TAG_RE = /<\/?([A-Za-z][A-Za-z0-9_]*)\b[^>]*>/g;
+  function findHiddenBlock(str) {
+    var m;
+    ANY_TAG_RE.lastIndex = 0;
+    while ((m = ANY_TAG_RE.exec(str))) {
+      if (HTML_TAGS[m[1].toLowerCase()]) continue;
+      var isOpen = m[0].charAt(1) !== '/';
+      /* 配另一半：开标签往后找闭标签，闭标签往前找开标签 */
+      var mate = new RegExp((isOpen ? '<\\/' : '<') + m[1] + '\\b[^>]*>', 'ig');
+      var mm, at = -1, atText = '';
+      while ((mm = mate.exec(str))) {
+        if (isOpen ? (mm.index > m.index) : (mm.index < m.index)) {
+          at = mm.index; atText = mm[0];
+          if (isOpen) break;                     /* 往后取第一个 */
+        } else if (!isOpen) {
+          at = -1; atText = '';                  /* 越过闭标签的位置，之前找的都不算 */
+        }
+      }
+      if (at < 0) return { index: m.index, text: m[0] };      /* 落单的半个标签，收掉它 */
+      var from = Math.min(m.index, at);
+      var to = Math.max(m.index, at) + (at < m.index ? m[0].length : atText.length);
+      return { index: from, text: str.slice(from, to) };
+    }
+    return null;
+  }
 
   function maskCodeBlocksIn(text) {
     var nodes = [];
@@ -83,31 +129,25 @@
     while ((n = walker.nextNode())) {
       var p = n.parentNode;
       if (!p) continue;
-      if (p.closest && (p.closest('.vmvu-code') || p.closest('#' + ROOT_ID))) continue;
+      if (p.closest && (p.closest('.' + HIDDEN_CLASS) || p.closest('#' + ROOT_ID))) continue;
       var v = n.nodeValue || '';
-      for (var i = 0; i < CODE_PATTERNS.length; i++) {
-        if (CODE_PATTERNS[i].test(v)) { nodes.push(n); break; }
-      }
+      if (findHiddenBlock(v)) nodes.push(n);
     }
     nodes.forEach(function (node) {
       var rest = node.nodeValue;
       var frag = document.createDocumentFragment();
       var hit = false;
       while (rest) {
-        var best = null;
-        CODE_PATTERNS.forEach(function (re) {
-          var m = re.exec(rest);
-          if (m && m[0] && (!best || m.index < best.index)) best = m;
-        });
+        var best = findHiddenBlock(rest);
         if (!best) break;
         hit = true;
         if (best.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, best.index)));
         var span = document.createElement('span');
-        span.className = 'vmvu-code';
+        span.className = HIDDEN_CLASS;
         span.style.display = 'none';
-        span.textContent = best[0];
+        span.textContent = best.text;
         frag.appendChild(span);
-        rest = rest.slice(best.index + best[0].length);
+        rest = rest.slice(best.index + best.text.length);
       }
       if (!hit) return;
       if (rest) frag.appendChild(document.createTextNode(rest));
@@ -120,7 +160,7 @@
       var tw = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT, null);
       var vis = '', x;
       while ((x = tw.nextNode())) {
-        if (x.parentNode && x.parentNode.closest && x.parentNode.closest('.vmvu-code')) continue;
+        if (x.parentNode && x.parentNode.closest && x.parentNode.closest('.' + HIDDEN_CLASS)) continue;
         vis += x.nodeValue || '';
       }
       if (!vis.replace(/\s/g, '')) pre.style.display = 'none';
@@ -159,6 +199,27 @@
       if (rest) frag.appendChild(document.createTextNode(rest));
       if (node.parentNode) node.parentNode.replaceChild(frag, node);
     });
+  }
+
+  /* 把这一楼正文里的「指令块 + 标记」都藏起来。
+     关键点：**每一层都要做**，跟这一楼挂不挂面板、是不是最近三层、是不是正在
+     流式输出都无关。以前只在「挂了面板的那三层」里做，于是往上翻的那些旧楼层
+     会把 {visual-mvu: 体力-5} / {: 好感度+1} 原样露在正文里。
+     玩家自己写的那一楼不动（免得把人家正文里的字吃了）。 */
+  function maskMessageText(mes) {
+    var text = mes.querySelector('.mes_text');
+    if (!text) return;
+    var key = text.textContent || '';
+    var had = mes.__vmvuMasked || 0;
+    if (mes.__vmvuMaskKey === key) {
+      if (!had) return;                                    /* 本来就没东西可藏 */
+      /* 藏过、而且藏的那几个节点还在（酒馆重绘会整块换掉，那就得重做一遍） */
+      if (text.querySelector('.' + HIDDEN_CLASS + ', .' + TRIGGER_CLASS)) return;
+    }
+    if (HIDE_TRIGGER) maskTriggerIn(text);
+    maskCodeBlocksIn(text);
+    mes.__vmvuMaskKey = text.textContent || '';
+    mes.__vmvuMasked = text.querySelectorAll('.' + HIDDEN_CLASS + ', .' + TRIGGER_CLASS).length;
   }
 
   function loadScript(src) {
@@ -352,6 +413,13 @@
     var list = document.querySelectorAll('#chat > .mes[mesid]');
     var n = 0;
     var deferred = false;
+    /* 第一步：把正文里的指令块 / 标记藏掉。
+       放在最前面、且每一层都做——翻上去的旧楼层、正在流式输出的那一楼，
+       都不能让 {visual-mvu: …} 这种东西露在界面上。 */
+    list.forEach(function (mes) {
+      if (mes.getAttribute('is_user') === 'true') return;   /* 玩家自己写的字不动 */
+      maskMessageText(mes);
+    });
     /* 先挑出「有触发标记的 AI 楼层」，只保留最后 MAX_PANEL_FLOORS 层 */
     var candidates = [];
     list.forEach(function (mes) {
@@ -359,9 +427,6 @@
       if (!isFinite(mid)) return;
       if (mes.getAttribute('is_user') === 'true') return;
       if (mes.getAttribute('is_system') === 'true') return;
-      /* 隐藏 MVU 指令块：每层都要做，跟挂不挂面板无关 */
-      var txAll = mes.querySelector('.mes_text');
-      if (txAll) maskCodeBlocksIn(txAll);
       candidates.push({ mes: mes, mid: mid });
     });
     var keep = {};
@@ -372,9 +437,6 @@
       if (!isFinite(mid)) return;
       if (mes.getAttribute('is_user') === 'true') return;
       if (mes.getAttribute('is_system') === 'true') return;
-      /* 隐藏 MVU 指令块：每层都要做，跟挂不挂面板无关 */
-      var txAll = mes.querySelector('.mes_text');
-      if (txAll) maskCodeBlocksIn(txAll);
       /* 超出「最近几层」的：把已经挂上的面板摘掉，不占 DOM */
       if (!keep[mid]) {
         var old = mes.querySelector('#' + ROOT_ID);
