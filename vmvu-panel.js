@@ -274,7 +274,9 @@ var TRASH_SVG =
         卡片底色: '',
         交互区底色: '',
         网格: true,
-        暗角: 0
+        暗角: 0,
+        亮度: 1,          /* 1 = 不变；整体 filter: brightness() */
+        对比度: 1         /* 1 = 不变；整体 filter: contrast() */
       },
       卡片: {}
     };
@@ -304,7 +306,9 @@ var TRASH_SVG =
       卡片底色: /^#[0-9a-f]{6}$/i.test(String(th.卡片底色 || '')) ? th.卡片底色 : '',
       交互区底色: /^#[0-9a-f]{6}$/i.test(String(th.交互区底色 || '')) ? th.交互区底色 : '',
       网格: th.网格 !== false,
-      暗角: clamp(num(th.暗角, 0), 0, 1)
+      暗角: clamp(num(th.暗角, 0), 0, 1),
+      亮度: clamp(num(th.亮度, 1), 0.4, 1.8),
+      对比度: clamp(num(th.对比度, 1), 0.4, 1.8)
     };
     var cards = (raw.卡片 && typeof raw.卡片 === 'object') ? raw.卡片 : {};
     Object.keys(cards).forEach(function (id) {
@@ -335,6 +339,7 @@ var TRASH_SVG =
         圆角: c.圆角 === false ? false : true,
         待设置: !!c.待设置,
         背景色: /^#[0-9a-f]{6}$/i.test(String(c.背景色 || '')) ? c.背景色 : '',
+        文字色: /^#[0-9a-f]{6}$/i.test(String(c.文字色 || '')) ? c.文字色 : '',
         字体: FONTS.some(function (f) { return f.id === c.字体; }) ? c.字体 : 'inherit',
         字号: num(c.字号, 0),                       /* 0 = 随区域大小自适应 */
         进度条粗细: clamp(num(c.进度条粗细, 8), 3, 26),
@@ -1241,6 +1246,21 @@ var TRASH_SVG =
     S.theme = c;
     /* 按钮 / 主色不能和背景撞色：按主题底色算对比度后自动调整 */
     applyAccentContrast(c.accent, c.panel);
+    /* 整体亮度 / 对比度：浅色主题嫌刺眼就压亮度，灰蒙蒙就把对比度拉高。
+       挂在 root 上的 filter 只影响面板自己（设置弹窗在 body 上，不受影响）。 */
+    var br = clamp(num(S.layout.主题.亮度, 1), 0.4, 1.8);
+    var ct = clamp(num(S.layout.主题.对比度, 1), 0.4, 1.8);
+    var filt = (Math.abs(br - 1) > 0.001 || Math.abs(ct - 1) > 0.001)
+      ? ('brightness(' + br.toFixed(3) + ') contrast(' + ct.toFixed(3) + ')')
+      : '';
+    S.root.style.filter = filt;
+    /* 别的楼层也挂着面板（历史楼层），它们的亮度/对比度一起跟上 */
+    try {
+      var others = document.querySelectorAll('.vmvu-mount');
+      for (var oi = 0; oi < others.length; oi++) {
+        if (others[oi] !== S.root) others[oi].style.filter = filt;
+      }
+    } catch (e) {}
     syncOverlayTheme();          /* 弹窗挂在 body 上，主题变量要同步过去 */
   }
 
@@ -1506,6 +1526,11 @@ var TRASH_SVG =
     /* 圆角开关 */
     card.style.setProperty('--vm-card-radius', cfg.圆角 === false ? '0' : '14px');
     if (cfg.背景色) card.style.setProperty('--vm-card-bg', cfg.背景色);
+    /* 每个变量区可以单独指定文字颜色（浅底 / 深底都能调清楚） */
+    if (cfg.文字色) {
+      card.style.setProperty('--vm-card-ink', cfg.文字色);
+      card.style.setProperty('--vm-card-ink-strong', cfg.文字色);
+    }
     /* 卡片底色会自动跟随：边框色没单独设时，用卡片底色的对比色当虚线颜色，
        免得「白框白底」看不见 */
     if (!cfg.边框色 && cfg.背景色) {
@@ -3077,6 +3102,38 @@ var TRASH_SVG =
     bgBox.appendChild(el('div', 'vm-hint', '留「跟随主题」就用主题给变量区的底色。'));
     stylePage.appendChild(field('变量区背景色', bgBox));
 
+    /* ---- 文字颜色（底色浅 / 底色深时，用它把字调清楚） ---- */
+    var INK_PRESETS = [
+      { label: '跟随主题', css: '' },
+      { label: '近黑', css: '#141413' },
+      { label: '深灰', css: '#3d3d3a' },
+      { label: '深棕', css: '#4a3b32' },
+      { label: '藏青', css: '#1f2a44' },
+      { label: '白', css: '#ffffff' },
+      { label: '浅米', css: '#f2efe8' }
+    ];
+    function paintCardInk() {
+      var c3 = liveCard();
+      if (!c3) return;
+      if (cfg.文字色) {
+        c3.style.setProperty('--vm-card-ink', cfg.文字色);
+        c3.style.setProperty('--vm-card-ink-strong', cfg.文字色);
+      } else {
+        c3.style.removeProperty('--vm-card-ink');
+        c3.style.removeProperty('--vm-card-ink-strong');
+      }
+    }
+    var inkBox = colorRow({
+      value: cfg.文字色,
+      fallback: '#141413',
+      presets: INK_PRESETS,
+      onLive: function (hex) { cfg.文字色 = hex; paintCardInk(); },
+      onChange: function (hex) { cfg.文字色 = hex; paintCardInk(); }
+    });
+    inkBox.appendChild(el('div', 'vm-hint',
+      '留「跟随主题」就用主题的文字色。变量区底色偏浅（比如白底）时，选深色字才不会糊在一起。'));
+    stylePage.appendChild(field('变量区文字色', inkBox));
+
     /* ---- 圆角开关 ---- */
     var radiusState = { on: cfg.圆角 !== false };
     var chkRadius = document.createElement('input');
@@ -3314,6 +3371,35 @@ var TRASH_SVG =
         aw.appendChild(s);
       });
       box.appendChild(field('强调色（与主题色独立）', aw));
+
+      /* 亮度 / 对比度：整体调节，浅色主题嫌刺眼就压亮度 */
+      function mkBcRange(label, key) {
+        var wrap = el('div');
+        var rng = document.createElement('input');
+        rng.type = 'range';
+        rng.min = '40'; rng.max = '180'; rng.step = '2';
+        rng.value = String(Math.round(num(th[key], 1) * 100));
+        var lab = el('div', 'vm-hint', rng.value + '%');
+        rng.addEventListener('input', function () {
+          th[key] = parseInt(rng.value, 10) / 100;
+          lab.textContent = rng.value + '%';
+          applyTheme();                    /* 立刻看到效果 */
+          saveLayout();
+        });
+        rng.addEventListener('dblclick', function () {
+          rng.value = '100'; th[key] = 1; lab.textContent = '100%';
+          applyTheme(); saveLayout();
+        });
+        wrap.appendChild(rng);
+        wrap.appendChild(lab);
+        return field(label, wrap);
+      }
+      var bcBox = el('div');
+      bcBox.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+      bcBox.appendChild(mkBcRange('亮度', '亮度'));
+      bcBox.appendChild(mkBcRange('对比度', '对比度'));
+      box.appendChild(field('亮度和对比度（100% = 不变，双击滑块复位）', bcBox));
+
       box.appendChild(el('div', 'vm-hint',
         '「淡」适合浅色界面，「浓」适合深色界面。两者共用同一批色相，切换时自动换算明暗。'));
       return box;
@@ -3619,6 +3705,7 @@ var TRASH_SVG =
     applyPrompt: applyPrompt,
     cleanupWorldbook: cleanupWorldbook,
     refit: refitAll,
+    applyTheme: applyTheme,                  /* 重新套用主题（外部改完亮度/对比度后可调用） */
     healVariables: healMissingVariables,      /* 把变量区里还缺的变量补出来 */
     applyMarker: applyMarker,                 /* 解析 AI 写在 {visual-mvu: …} 里的变量改动 */
     /** 加一张变量区（也会同步世界书） */
@@ -3662,6 +3749,9 @@ var TRASH_SVG =
     /* 调试用：读内部状态，排查「面板突然空了」这类问题 */
     _state: function () {
       return {
+        messageId: S.messageId,
+        layout: S.layout,                 /* 调试/自动化用：直接看这份布局 */
+        statData: S.statData,
         hasRoot: !!S.root,
         rootInDom: !!(S.root && document.body.contains(S.root)),
         rootChildCount: S.root ? S.root.childElementCount : -1,
