@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.15';
+  var BUILD = '2026-10-05.16';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -2062,7 +2062,8 @@ var TRASH_SVG =
     }
 
     hostNode.appendChild(box);
-    if (firstBtn && firstBtn.focus) setTimeout(function () { firstBtn.focus(); }, 20);
+    /* preventScroll：不然浏览器会把聚焦的按钮/输入框滚进视野，页面会「往上一跳」 */
+    if (firstBtn && firstBtn.focus) setTimeout(function () { try { firstBtn.focus({ preventScroll: true }); } catch (e) { firstBtn.focus(); } }, 20);
   }
 
   /* 点卡片外面退出修改态 */
@@ -2712,6 +2713,7 @@ var TRASH_SVG =
     ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeModal(); });
     document.body.appendChild(ov);     /* 挂到 body：不受消息容器 transform 影响 */
     currentOverlay = ov;
+    anchorOverlaySoon(ov);
     syncOverlayTheme();                /* 把主题变量复制过来，否则弹窗背景是透明的 */
     return ov;
   }
@@ -2719,6 +2721,50 @@ var TRASH_SVG =
      祖先可能带 transform / filter，position:fixed 会被它“抓住”，
      弹窗就会跑到聊天顶部去（点哪一层的设置都不对）。 */
   var currentOverlay = null;
+
+  /* 弹窗定位自检
+   * 正常情况 position:fixed 会铺满整个视口；但只要祖先里有人带了
+   * transform / filter / backdrop-filter / contain / will-change，
+   * fixed 的包含块就会被改掉 —— 弹窗会跑到文档顶部（看着像「飞天上去」）。
+   * 酒馆的主题、消息容器、某些脚本都可能干这事，所以这里量一下：
+   * 没铺满视口就改用「按滚动位置手算的绝对定位」兜住。 */
+  function anchorOverlay(ov) {
+    if (!ov) return;
+    try {
+      var r = ov.getBoundingClientRect();
+      var vw = window.innerWidth, vh = window.innerHeight;
+      var bad = Math.abs(r.top) > 2 || Math.abs(r.left) > 2 ||
+                r.width < vw - 4 || r.height < vh - 4;
+      if (!bad) return;
+      var sx = window.scrollX || window.pageXOffset || 0;
+      var sy = window.scrollY || window.pageYOffset || 0;
+      ov.style.position = 'absolute';
+      ov.style.top = sy + 'px';
+      ov.style.left = sx + 'px';
+      ov.style.width = vw + 'px';
+      ov.style.height = vh + 'px';
+      ov.style.inset = 'auto';
+      console.warn('[可视化面板] 弹窗定位被外部容器影响（transform/filter 之类），已改用绝对定位兜底');
+    } catch (e) {}
+  }
+  function anchorOverlaySoon(ov) {
+    var sx0 = window.scrollX || 0, sy0 = window.scrollY || 0;
+    var fix = function () {
+      anchorOverlay(ov);
+      /* 兜一层：万一聚焦输入框/插入 DOM 把页面滚走了，拉回打开前的位置 */
+      var sx1 = window.scrollX || 0, sy1 = window.scrollY || 0;
+      if (Math.abs(sy1 - sy0) > 2 || Math.abs(sx1 - sx0) > 2) {
+        try { window.scrollTo(sx0, sy0); } catch (e) {}
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(fix);
+      setTimeout(fix, 60);
+    } else {
+      setTimeout(fix, 16);
+      setTimeout(fix, 60);
+    }
+  }
 
   /* 弹窗挂在 body 上，拿不到 #vmvu-root 上的主题变量 —— 把根节点的行内变量复制一份过去，
      否则 var(--vm-panel-bg) 全部解析失败，背景就变透明了。 */
@@ -2794,6 +2840,7 @@ var TRASH_SVG =
     ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeModal(); });
     document.body.appendChild(ov);     /* 挂到 body：不受消息容器 transform 影响 */
     currentOverlay = ov;
+    anchorOverlaySoon(ov);
     syncOverlayTheme();                /* 把主题变量复制过来，否则弹窗背景是透明的 */
     if (kind) ov.setAttribute('data-kind', kind);
 
@@ -3440,7 +3487,7 @@ var TRASH_SVG =
       cfg.样式 = sStyle.vmValue();
       var freeStyle = (cfg.样式 === '自定义文字' || cfg.样式 === '图片');
       var v = iVar.value.trim();
-      if (!freeStyle && !v) { iVar.focus(); iVar.style.borderColor = '#ff6a6a'; return; }
+      if (!freeStyle && !v) { try { iVar.focus({ preventScroll: true }); } catch (e) { iVar.focus(); } iVar.style.borderColor = '#ff6a6a'; return; }
       cfg.变量 = freeStyle ? '' : v;
       cfg.显示名 = iName.value.trim() || (freeStyle ? '自由卡片' : v);
       cfg.自定义文字 = iFreeText.value;
@@ -3503,7 +3550,8 @@ var TRASH_SVG =
       mo.observe(S.root, { childList: true });
     }
 
-    setTimeout(function () { iVar.focus(); }, 30);
+    /* preventScroll：打开设置时别让页面滚到顶部（非全屏、页面能滚时特别明显） */
+    setTimeout(function () { try { iVar.focus({ preventScroll: true }); } catch (e) { iVar.focus(); } }, 30);
   }
 
   /* ---------------- 面板设置（分页） ---------------- */
