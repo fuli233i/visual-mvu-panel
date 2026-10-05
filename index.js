@@ -278,16 +278,38 @@
   }
 
   /* 只给「AI 回复」挂面板（跳过用户消息、系统消息） */
+  /* 只渲染最近这么多层：长聊天里每楼一块面板会线性吃内存，
+     翻上去的旧楼层不挂面板（布局是按聊天存的，不会丢数据）。 */
+  var MAX_PANEL_FLOORS = 3;
+
   function renderAll() {
     var liveId = latestAiFloorId();
     var list = document.querySelectorAll('#chat > .mes[mesid]');
     var n = 0;
     var deferred = false;
+    /* 先挑出「有触发标记的 AI 楼层」，只保留最后 MAX_PANEL_FLOORS 层 */
+    var candidates = [];
     list.forEach(function (mes) {
       var mid = Number(mes.getAttribute('mesid'));
       if (!isFinite(mid)) return;
       if (mes.getAttribute('is_user') === 'true') return;
       if (mes.getAttribute('is_system') === 'true') return;
+      candidates.push({ mes: mes, mid: mid });
+    });
+    var keep = {};
+    candidates.slice(-MAX_PANEL_FLOORS).forEach(function (c) { keep[c.mid] = 1; });
+
+    list.forEach(function (mes) {
+      var mid = Number(mes.getAttribute('mesid'));
+      if (!isFinite(mid)) return;
+      if (mes.getAttribute('is_user') === 'true') return;
+      if (mes.getAttribute('is_system') === 'true') return;
+      /* 超出「最近几层」的：把已经挂上的面板摘掉，不占 DOM */
+      if (!keep[mid]) {
+        var old = mes.querySelector('#' + ROOT_ID);
+        if (old && old.parentNode) old.parentNode.removeChild(old);
+        return;
+      }
       /* 正在流式输出的那一楼先别挂：酒馆每收到一段文字就把正文整个重写一遍，
          这时候挂上去的面板下一秒就被抹掉，表现就是「流式时一直在闪」。 */
       if (mid === liveId && rawChangedRecently(mid)) { deferred = true; return; }

@@ -426,10 +426,15 @@ var TRASH_SVG =
   }
 
   function readStat() {
+    /* 读变量要深拷贝整张变量表，同一楼反复读很亏 —— 同一楼只读一次，
+       真正需要刷新时（refresh / 切换楼层）用 readStat(true) 强制重读。 */
+    if (!arguments[0] && S.__statMid === S.messageId && S.__statCache) return S.__statCache;
     try {
       if (S.api && S.api.getVariables) {
         var v = S.api.getVariables(loc());
-        return (v && v.stat_data) || {};
+        S.__statMid = S.messageId;
+        S.__statCache = (v && v.stat_data) || {};
+        return S.__statCache;
       }
     } catch (e) { console.warn('[可视化面板] 读取变量失败', e); }
     return S.statData || {};
@@ -2703,7 +2708,7 @@ var TRASH_SVG =
   /* ---------------- 弹窗 ---------------- */
   function modal(title, bodyNode, footNodes) {
     closeModal();
-    var ov = el('div', 'vm-overlay');
+    var ov = createOverlay();
     var box = el('div', 'vm-modal');
     var head = el('div', 'vm-modal-head');
     head.appendChild(el('span', 'vm-modal-title', esc(title)));
@@ -2723,7 +2728,6 @@ var TRASH_SVG =
 
     ov.appendChild(box);
     ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeModal(); });
-    document.body.appendChild(ov);     /* 挂到 body：不受消息容器 transform 影响 */
     currentOverlay = ov;
     anchorOverlaySoon(ov);
     syncOverlayTheme();                /* 把主题变量复制过来，否则弹窗背景是透明的 */
@@ -2733,6 +2737,33 @@ var TRASH_SVG =
      祖先可能带 transform / filter，position:fixed 会被它“抓住”，
      弹窗就会跑到聊天顶部去（点哪一层的设置都不对）。 */
   var currentOverlay = null;
+
+  /* 弹窗外壳
+   * 优先用 <dialog>.showModal()：它渲染在浏览器**顶层（top layer）**，
+   * 不受任何祖先的 transform / filter / contain / will-change 影响 ——
+   * 从根上杜绝「弹窗飞到页面顶部」这类问题（那个坑以前靠 position:fixed 是防不住的）。
+   * 老浏览器不支持 showModal 时退回普通 div（附定位自检兜底）。 */
+  function createOverlay() {
+    var canDialog = (typeof HTMLDialogElement !== 'undefined') &&
+                    HTMLDialogElement.prototype &&
+                    typeof HTMLDialogElement.prototype.showModal === 'function';
+    if (canDialog) {
+      var dlg = document.createElement('dialog');
+      dlg.className = 'vm-overlay vm-dialog';
+      document.body.appendChild(dlg);
+      try {
+        dlg.showModal();
+        /* Esc 关掉时走我们自己的收尾（清监听、摘节点） */
+        dlg.addEventListener('cancel', function (e) { e.preventDefault(); closeModal(); });
+        return dlg;
+      } catch (e) {
+        if (dlg.parentNode) dlg.parentNode.removeChild(dlg);
+      }
+    }
+    var ov = el('div', 'vm-overlay');
+    document.body.appendChild(ov);
+    return ov;
+  }
 
   /* 弹窗定位自检
    * 正常情况 position:fixed 会铺满整个视口；但只要祖先里有人带了
@@ -2801,6 +2832,7 @@ var TRASH_SVG =
     $$('.vm-dd, .vm-picker', ov).forEach(function (n) {
       if (typeof n.vmDestroy === 'function') { try { n.vmDestroy(); } catch (e) {} }
     });
+    if (ov.tagName === 'DIALOG' && ov.open) { try { ov.close(); } catch (e) {} }
     ov.parentNode.removeChild(ov);
   }
 
@@ -2808,7 +2840,7 @@ var TRASH_SVG =
    * tabs: [{ id, label, build: function () { return Node } }] */
   function settingsModal(title, tabs, footNodes, kind) {
     closeModal();
-    var ov = el('div', 'vm-overlay');
+    var ov = createOverlay();
     var box = el('div', 'vm-modal');
 
     var head = el('div', 'vm-modal-head');
@@ -2850,7 +2882,6 @@ var TRASH_SVG =
 
     ov.appendChild(box);
     ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeModal(); });
-    document.body.appendChild(ov);     /* 挂到 body：不受消息容器 transform 影响 */
     currentOverlay = ov;
     anchorOverlaySoon(ov);
     syncOverlayTheme();                /* 把主题变量复制过来，否则弹窗背景是透明的 */
@@ -4065,7 +4096,7 @@ var TRASH_SVG =
       /* 正在拖（含正在拖出新的变量区）时不重绘：
          重绘会把草稿框一起冲掉，表现就是「按住一两秒那块区域自己没了」。 */
       if (drag.mode) return;
-      S.statData = readStat();
+      S.statData = readStat(true);      /* 刷新：强制重读（变量可能刚被 AI 改过） */
       /* 删掉消息退回上一楼、或 AI 刚更新完变量之后，都可能出现「变量区绑的变量在这一楼没了」，
          这里顺手补出来（只在最新可交互楼层动手，历史楼层只读）。 */
       healMissingVariables('刷新');
@@ -4088,7 +4119,7 @@ var TRASH_SVG =
       S.layer = rootEl.querySelector('.vm-layer') || S.layer;
       S.scrollTrack = rootEl.querySelector('.vm-scroll-track') || S.scrollTrack;
       S.scrollThumb = rootEl.querySelector('.vm-scroll-thumb') || S.scrollThumb;
-      if (!S.demo) S.statData = readStat();
+      if (!S.demo) S.statData = readStat(true);   /* 换了一块面板：这一楼要重新读 */
       return true;
     },
 

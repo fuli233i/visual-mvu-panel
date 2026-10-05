@@ -397,6 +397,21 @@ body.vm-page { background: #07070a; min-height: 100vh; }
   animation: vmFade 0.18s var(--vm-ease) both;
 }
 @keyframes vmFade { from { opacity: 0; } to { opacity: 1; } }
+
+/* 用 <dialog> 当弹窗外壳时：它渲染在浏览器顶层（top layer），
+   祖先的 transform / filter 都影响不到它 —— 从根上避免「弹窗飞到页面顶部」。
+   底色交给 ::backdrop，自己只负责居中。 */
+dialog.vm-overlay {
+  position: fixed; inset: 0; margin: 0; z-index: 10060;
+  width: 100vw; height: 100vh; max-width: none; max-height: none;
+  border: 0; background: transparent; color: inherit; overflow: hidden;
+}
+dialog.vm-overlay[open] { display: grid; place-items: center; }
+dialog.vm-overlay::backdrop {
+  background: rgba(20, 20, 19, 0.42);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
 .vm-modal {
   width: min(500px, 100%); max-height: 86vh;
   display: flex; flex-direction: column; overflow: hidden;
