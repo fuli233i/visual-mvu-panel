@@ -579,7 +579,8 @@ var TRASH_SVG =
     if (S.demo || !S.api || !S.layout) return 0;
     if (typeof messageId === 'number' && S.messageId !== messageId) return 0;
     if (S.root && S.root.getAttribute('data-vmvu-live') === '0') return 0;
-    var m = /\{\s*visual[-\s]?mvu\s*[:：]\s*([^}]*)\}/i.exec(String(rawText || ''));
+    /* 兼容两种写法：{visual-mvu: 变量+1} 和「visual-mvu 被谁吃掉后」剩下的 {: 变量+1} */
+    var m = /\{\s*(?:visual[-\s]?mvu\s*)?[:：]\s*([^}]*)\}/i.exec(String(rawText || ''));
     if (!m) return 0;
     var payload = String(m[1]).trim();
     if (!payload) return 0;

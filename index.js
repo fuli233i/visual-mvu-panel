@@ -32,7 +32,11 @@
     /\{\s*visual[-\s]?mvu\s*(?:[:：]\s*[^}]*)?\}/i,
     /\[\s*visual[-\s]?mvu\s*\]/i,     /* [visual-mvu] */
     /<\s*visual[-\s]?mvu\s*\/?\s*>/i, /* <visual-mvu> / <visual-mvu/>（代码块里没被过滤时） */
-    /\bvisual-?mvu\b/i                /* 尖括号被过滤后剩下的裸文本 */
+    /\bvisual-?mvu\b/i,               /* 尖括号被过滤后剩下的裸文本 */
+    /* 兜底：有些预设/正则会把标记里的「visual-mvu」几个字单独吃掉，
+       只剩 `{: 变量+1, 别的=值}` —— 这种也认，不然那一行会露在正文里。
+       只认「花括号 + 冒号 + 里面至少有一个 + - = 运算」，避免误伤正文里正常的 {xxx:yyy} */
+    /\{\s*[:：]\s*[^}]*[+\-=＝][^}]*\}/i
   ];
   var TRIGGER_HINT = '{visual-mvu}';
   var HIDE_TRIGGER = true;            /* 把标记从正文里藏起来，别让它露在界面上 */
