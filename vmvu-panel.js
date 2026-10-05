@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.10';
+  var BUILD = '2026-10-05.11';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -2683,7 +2683,13 @@ var TRASH_SVG =
      否则 var(--vm-panel-bg) 全部解析失败，背景就变透明了。 */
   function syncOverlayTheme() {
     if (!currentOverlay || !S.root) return;
-    try { currentOverlay.setAttribute('style', S.root.getAttribute('style') || ''); } catch (e) {}
+    try {
+      /* 只搬主题变量过去。root 上的 filter（亮度/对比度）不能跟着来 ——
+         不然你调暗面板，设置弹窗也一起被调暗，调起来就没法看清了。 */
+      var styleText = String(S.root.getAttribute('style') || '').replace(/(^|;)\s*filter\s*:[^;]*;?/gi, '$1');
+      currentOverlay.setAttribute('style', styleText);
+      currentOverlay.style.filter = 'none';
+    } catch (e) {}
   }
 
   function closeModal() {
