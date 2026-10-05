@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.20';
+  var BUILD = '2026-10-05.21';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -542,17 +542,56 @@ var TRASH_SVG =
     if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
     return s;
   }
+  /* 路径写法归一化。AI 经常照抄 JSONPatch 的写法带上前导斜杠
+     （{visual-mvu: /子宫.内射次数+1, /雌堕度+2}），也有人写 stat_data. 前缀，
+     还有写成 /stat_data/xxx 的。这里统一剥掉，免得「路径对不上 → 判定成别人的变量 → 整条丢掉」。
+     注意：只剥前后缀，不改中间的层级写法（点号分层的规则由 getPath/setPath 决定）。 */
+  function normPath(p) {
+    return String(p == null ? '' : p).trim()
+      .replace(/^\/+/, '')
+      .replace(/^stat_data\s*[.\/]?\s*/i, '')
+      .replace(/^\/+/, '')
+      .trim();
+  }
+  /* 拆开「多项改动」。不能用简单 split(/[,，;；]/)：
+     文本值本身可能带逗号（服装="上衣，裙子"），那样会被从引号中间切开。
+     这里做成「引号外才切」的小扫描器。 */
+  function splitMarkerItems(s) {
+    var out = [], cur = '', quote = null, str = String(s || '');
+    for (var i = 0; i < str.length; i++) {
+      var ch = str.charAt(i);
+      if (quote) {
+        cur += ch;
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '“' || ch === '”') {
+        quote = (ch === '“') ? '”' : ch;
+        cur += ch;
+        continue;
+      }
+      if (ch === ',' || ch === '，' || ch === ';' || ch === '；' || ch === '、' || ch === '\n') {
+        out.push(cur); cur = '';
+        continue;
+      }
+      cur += ch;
+    }
+    out.push(cur);
+    return out;
+  }
   function parseMarkerOps(payload) {
     var out = [];
-    String(payload || '').split(/[,，;；]/).forEach(function (raw) {
+    splitMarkerItems(payload).forEach(function (raw) {
       var s = String(raw).trim();
       if (!s) return;
-      var m = /^([^+\-=＝：:]+?)\s*([+\-=＝])\s*(.+)$/.exec(s);
+      var m = /^([^+\-＋－=＝：:]+?)\s*([+\-＋－=＝])\s*(.+)$/.exec(s);
       if (!m) return;
-      var path = m[1].trim().replace(/^stat_data\./, '');
+      var path = normPath(m[1]);
       var op = m[2].replace('＝', '=');
       var v = m[3].trim();
       if (!path || !v) return;
+      if (op === '＋') op = '+';
+      else if (op === '－') op = '-';
       if (op === '+' || op === '-') {
         var n = parseFloat(String(v).replace(/[^\d.\-]/g, ''));
         if (isFinite(n)) out.push({ path: path, delta: (op === '-' ? -n : n) });
@@ -568,7 +607,7 @@ var TRASH_SVG =
     while ((x = re.exec(String(rawText || '')))) {
       try {
         JSON.parse(x[1].trim()).forEach(function (o) {
-          if (o && o.path) out[String(o.path).replace(/^\//, '')] = 1;
+          if (o && o.path) out[normPath(o.path)] = 1;
         });
       } catch (e) {}
     }
@@ -590,7 +629,10 @@ var TRASH_SVG =
     var mine = {};
     Object.keys(S.layout.卡片 || {}).forEach(function (id) {
       var c = S.layout.卡片[id];
-      if (c && !c.待设置 && c.变量) mine[c.变量] = 1;
+      if (c && !c.待设置 && c.变量) {
+        mine[normPath(c.变量)] = 1;
+        mine[String(c.变量).trim()] = 1;      /* 变量区里写的是原样，也认 */
+      }
     });
     var inPatch = jsonPatchPaths(rawText);
     var use = ops.filter(function (o) { return mine[o.path] && !inPatch[o.path]; });
@@ -766,6 +808,7 @@ var TRASH_SVG =
          '单独一行输出，面板靠这一行显示，也靠这一行接收变量改动：\n' +
          '· 本轮上面那些变量没有变化 → 只写：' + PANEL_TRIGGER + '\n' +
          '· 有变化 → 把改动写进同一个花括号，多项用英文逗号分隔：{visual-mvu: 体力-5, 好感度=95}\n' +
+         '  （路径写变量名就行，带不带前导 / 都认；不要写 stat_data 前缀）\n' +
          '  数字增减用 +N / -N；整值用 =值；文本用 ="内容"；是或否用 =是 / =否\n' +
          '  没变化就不要写这一项，也不要写「=当前值」这种空操作（本来就没动）\n' +
          '  上面这些面板变量优先写在这一行里；已经写进 <UpdateVariable> 的就不要再写一遍\n' +
