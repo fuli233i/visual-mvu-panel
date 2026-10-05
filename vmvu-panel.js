@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.16';
+  var BUILD = '2026-10-05.17';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -1547,6 +1547,7 @@ var TRASH_SVG =
       }
     }
     /* 字体与字号：0 表示随区域大小自适应（挂 ResizeObserver 实时算） */
+    card.__vmRot = num(cfg.图片旋转, 0);      /* 图片卡片用：fitCard 里按这个角度算尺寸 */
     var fontDef = null;
     for (var fi = 0; fi < FONTS.length; fi++) if (FONTS[fi].id === cfg.字体) fontDef = FONTS[fi];
     if (fontDef && fontDef.css) card.style.fontFamily = fontDef.css;
@@ -1701,6 +1702,8 @@ var TRASH_SVG =
       im.alt = '';
       im.src = cfg.图片;
       im.style.transform = 'rotate(' + num(cfg.图片旋转, 0) + 'deg)';
+      /* 图片载入后再按「旋转后仍完整放得下」算一次尺寸 */
+      im.addEventListener('load', function () { fitRotatedImageSoon(im); });
       im.addEventListener('error', function () {
         if (im.parentNode) {
           im.parentNode.replaceChild(el('div', 'vm-text-val vm-free-holder', '（图片加载失败）'), im);
@@ -2324,6 +2327,9 @@ var TRASH_SVG =
     try {
       var cfgH = parseFloat(card.style.height) || card.clientHeight;
       var cfgW = parseFloat(card.style.width) || card.clientWidth;
+      /* 自由卡片（图片）：旋转后要整张都留在框里，不能贴边被裁 */
+      var freeImg = card.querySelector('.vm-free-img');
+      if (freeImg) fitRotatedImage(freeImg, cfgW, cfgH, num(card.__vmRot, 0));
       var innerW = Math.max(20, cfgW - 24);        /* 减去左右内边距 */
       var innerH = Math.max(16, cfgH - 34);        /* 减去上下内边距 + 标题行 */
 
@@ -2897,6 +2903,38 @@ var TRASH_SVG =
   };
 
   /* ---------------- 图片处理 ---------------- */
+  /* 旋转后仍然整张放得进框里：
+     直接把图片按 contain 塞进 W×H、再转 θ，四角会顶出框外被裁；
+     这里按旋转后的外接矩形反解一个缩放系数，让整张图都留在框内。 */
+  function fitRotatedImage(im, boxW, boxH, deg) {
+    if (!im || !im.naturalWidth || !im.naturalHeight || !boxW || !boxH) return;
+    var rad = num(deg, 0) * Math.PI / 180;
+    var c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+    var ar = im.naturalWidth / im.naturalHeight;
+    var w0 = Math.min(boxW, boxH * ar);
+    var h0 = w0 / ar;
+    var k = 1;
+    var needW = w0 * c + h0 * s;
+    var needH = w0 * s + h0 * c;
+    if (needW > boxW) k = Math.min(k, boxW / needW);
+    if (needH > boxH) k = Math.min(k, boxH / needH);
+    im.style.width = (w0 * k).toFixed(2) + 'px';
+    im.style.height = (h0 * k).toFixed(2) + 'px';
+    im.style.transform = 'rotate(' + num(deg, 0) + 'deg)';
+  }
+  function fitRotatedImageSoon(im) {
+    var run = function () {
+      var card = im.closest ? im.closest('.vm-card') : null;
+      if (!card) return;
+      /* 自由卡片没有内边距，减去 2px 免得贴边被 1px 边框裁掉 */
+      fitRotatedImage(im, Math.max(8, card.clientWidth - 2), Math.max(8, card.clientHeight - 2),
+        num(card.__vmRot, 0));
+    };
+    run();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+    setTimeout(run, 60);
+  }
+
   /* 把图片压到 maxSide 以内，避免布局 JSON 过大。带透明通道输出 PNG，否则 JPEG */
   function shrinkImage(file, maxSide) {
     maxSide = maxSide || 256;
@@ -2905,7 +2943,17 @@ var TRASH_SVG =
       reader.onerror = function () { reject(new Error('读取文件失败')); };
       reader.onload = function () {
         var img = new Image();
-        img.onerror = function () { reject(new Error('不是可识别的图片格式')); };
+        img.onerror = function () {
+          /* 画布解不开（svg / avif 之类）：原样把文件数据存下来，至少能显示 */
+          try {
+            var raw = (reader.result && String(reader.result)) || '';
+            if (raw && raw.length <= 2 * 1024 * 1024) {
+              resolve({ data: raw, w: 0, h: 0 });
+              return;
+            }
+          } catch (e) {}
+          reject(new Error('这个图片格式浏览器解不开，换 png / jpg 试试'));
+        };
         img.onload = function () {
           try {
             var scale = Math.min(1, maxSide / Math.max(img.width, img.height));
@@ -2932,7 +2980,12 @@ var TRASH_SVG =
   }
 
   function readImageFile(file, maxSide) {
-    if (!file || !/^image\//.test(file.type || '')) return Promise.reject(new Error('请拖入图片文件'));
+    if (!file) return Promise.reject(new Error('请拖入图片文件'));
+    /* 有些来源（从别的程序拖、某些网盘客户端）拿到的 File 没有 MIME 类型，
+       只按 type 判断会误报「请拖入图片文件」，这里补一层扩展名兜底。 */
+    var typeOk = /^image\//.test(file.type || '');
+    var extOk = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i.test(file.name || '');
+    if (!typeOk && !extOk) return Promise.reject(new Error('请拖入图片文件（png / jpg / webp / gif 都行）'));
     if (file.size > 8 * 1024 * 1024) return Promise.reject(new Error('图片太大了（超过 8MB）'));
     return shrinkImage(file, maxSide || 256);
   }
@@ -3048,11 +3101,13 @@ var TRASH_SVG =
     });
     dropZone.addEventListener('dragover', function (e) {
       e.preventDefault();
+      e.stopPropagation();          /* 别让酒馆自己的拖放处理也跟着吃这个文件 */
       dropZone.classList.add('over');
     });
     dropZone.addEventListener('dragleave', function () { dropZone.classList.remove('over'); });
     dropZone.addEventListener('drop', function (e) {
       e.preventDefault();
+      e.stopPropagation();
       dropZone.classList.remove('over');
       var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
       if (f) handleImageFile(f);
@@ -3063,7 +3118,7 @@ var TRASH_SVG =
       for (var i = 0; i < items.length; i++) {
         if (items[i].type && items[i].type.indexOf('image') === 0) {
           var f = items[i].getAsFile();
-          if (f) { handleImageFile(f); e.preventDefault(); return; }
+          if (f) { handleImageFile(f); e.preventDefault(); e.stopPropagation(); return; }
         }
       }
     });
@@ -3272,6 +3327,7 @@ var TRASH_SVG =
     var pvDrop = el('div', 'vm-dropzone',
       '<div class="vm-dropzone-main">把图片拖到这里</div>' +
       '<div class="vm-dropzone-sub">或点击选择文件 · 也可以直接 Ctrl+V 粘贴</div>');
+    pvDrop.setAttribute('data-vm-free-img', '1');     /* 用来区分图标那个拖放区（自动化/排查用） */
     var pvFile = document.createElement('input');
     pvFile.type = 'file';
     pvFile.accept = 'image/*';
@@ -3296,8 +3352,9 @@ var TRASH_SVG =
       pvStatus.textContent = '正在处理图片…';
       readImageFile(f, 1024).then(function (res) {
         applyFreeImage(res.data);
-        pvStatus.textContent = '已载入 ' + res.w + '×' + res.h +
-          '（已压缩，约 ' + Math.round(res.data.length / 1024) + ' KB）';
+        pvStatus.textContent = res.w
+          ? ('已载入 ' + res.w + '×' + res.h + '（已压缩，约 ' + Math.round(res.data.length / 1024) + ' KB）')
+          : ('已载入（原始数据直存，约 ' + Math.round(res.data.length / 1024) + ' KB）');
         pvUrl.value = '';
       }).catch(function (err) {
         pvStatus.textContent = '';
@@ -3312,7 +3369,8 @@ var TRASH_SVG =
     pvDrop.addEventListener('dragover', function (e) { e.preventDefault(); pvDrop.classList.add('over'); });
     pvDrop.addEventListener('dragleave', function () { pvDrop.classList.remove('over'); });
     pvDrop.addEventListener('drop', function (e) {
-      e.preventDefault(); pvDrop.classList.remove('over');
+      e.preventDefault(); e.stopPropagation();   /* 拦下来，别让酒馆的全局拖放也跟着处理 */
+      pvDrop.classList.remove('over');
       var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
       if (f) loadFreeImage(f);
     });
@@ -3322,7 +3380,7 @@ var TRASH_SVG =
       for (var i = 0; i < items.length; i++) {
         if (items[i].type && items[i].type.indexOf('image') === 0) {
           var f = items[i].getAsFile();
-          if (f) { loadFreeImage(f); e.preventDefault(); return; }
+          if (f) { loadFreeImage(f); e.preventDefault(); e.stopPropagation(); return; }
         }
       }
     });
@@ -3342,7 +3400,9 @@ var TRASH_SVG =
     function paintRot() {
       var c = liveCard();
       var im = c && c.querySelector('.vm-free-img');
-      if (im) im.style.transform = 'rotate(' + num(cfg.图片旋转, 0) + 'deg)';
+      if (c) c.__vmRot = num(cfg.图片旋转, 0);
+      if (im) fitRotatedImage(im, Math.max(8, (c ? c.clientWidth : 0) - 2),
+        Math.max(8, (c ? c.clientHeight : 0) - 2), num(cfg.图片旋转, 0));
     }
     rotRange.addEventListener('input', function () {
       cfg.图片旋转 = parseInt(rotRange.value, 10) || 0;
