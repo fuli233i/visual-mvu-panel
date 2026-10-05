@@ -124,6 +124,14 @@
    * 把出现在 findRegex 里的标签名收集起来。 */
   var HIDE_TAG_NAMES = ['updatevariable', 'jsonpatch', 'statusplaceholderimpl', 'analysis',
     'disclaimer', 'think', 'thinking', 'reasoning', 'cot', 'scratchpad', 'inner_monologue'];
+  /* 思考类标签：名字里带 think / thought / reason 的一律当指令块藏掉
+     （实测见过 think_nya、think_fox~、reasoning_content 这些）。
+     这类名字几乎不可能被卡拿来当正文容器，风险很低；
+     真要例外，让 AI 把那内容夹进 {unvis} 里反而更直接。
+     注意：仍然排在「卡自己管过」之后 —— 卡为它写了正则，就还是卡说了算。 */
+  function looksLikeReasoning(name) {
+    return /think|thought|reason|monologue/.test(String(name || '').toLowerCase());
+  }
   /* 一个指令块最多这么长。超过就不认（宁可不删）——
      踩过的坑：AI 漏写 </UpdateVariable> 时，匹配会一路吃到下一个闭标签，
      把中间一大段正文吞掉。 */
@@ -154,9 +162,9 @@
   function isInstructionTag(name, handled) {
     var n = String(name || '').toLowerCase();
     if (!n || HTML_TAGS[n]) return false;
-    if (HIDE_TAG_NAMES.indexOf(n) < 0) return false;       /* ① 名单外的不碰 */
-    if (handled && handled[n]) return false;               /* ② 卡自己管，别插手 */
-    return true;
+    if (handled && handled[n]) return false;               /* ① 卡自己管，别插手 */
+    if (HIDE_TAG_NAMES.indexOf(n) >= 0) return true;       /* ② 名单里的指令标签 */
+    return looksLikeReasoning(n);                          /* ③ 思考类标签 */
   }
 
   var ANY_TAG_RE = /<\/?([A-Za-z][A-Za-z0-9_]*)\b[^>]*>/g;
@@ -323,10 +331,14 @@
     /* notHandled：这张卡自己用正则管过的标签名不碰（正文容器 / 美化面板 / CG / 状态栏）。 */
     var names = Object.keys(handled || {});
     var notHandled = names.length ? ('(?!(?:' + names.join('|') + ')\\b)') : '';
+    /* 思考类标签：名字任意位置带 think / thought / reason / monologue */
+    var byReason = '(?=[A-Za-z0-9_-]*(?:think|thought|reason|monologue))[A-Za-z][A-Za-z0-9_-]*';
+    var byName = '(?:(?:' + HIDE_TAG_NAMES.join('|') + ')|' + byReason + ')';
     /* ① 名单里的指令标签（卡没管才删）
        ② 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
     return '(?:' +
-      '<' + notHandled + '(' + HIDE_TAG_NAMES.join('|') + ')\\b[^>]*>[\\s\\S]{0,' + HIDE_BLOCK_MAX + '}?<\\/\\1\\s*>' +
+      /* 闭合标签后面允许有点杂物：实测有卡把思考块写成 <think_fox~>…</think_fox~> */
+      '<' + notHandled + '(' + byName + ')\\b[^>]*>[\\s\\S]{0,' + HIDE_BLOCK_MAX + '}?<\\/\\1[^>]{0,24}>' +
       '|\\{\\s*unvis\\s*\\}[\\s\\S]{0,' + HIDE_BLOCK_MAX + '}?\\{\\s*unvis\\s*\\}' +
       '|\\{\\s*unvis\\s*\\}' +
       '|\\{\\s*visual[-\\s]?mvu\\s*(?:[:：]\\s*[^}]*)?\\}' +
