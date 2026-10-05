@@ -96,12 +96,30 @@
   /* 在一段纯文本里找出「下一个该整块藏起来的东西」。
      写法上刻意避开「先找开头再懒匹配结尾」那种回溯写法（长正文会卡），
      改成一次扫描找标签、再去配另一半，全程 O(n)。 */
+  /* 哪些标签算「给 AI / 程序看的指令」？
+     不能只按「是不是正经 HTML」判断 —— 有的卡拿自定义标签当**正文容器**
+     （实测踩过：正文整段包在 <game>…</game> 里，一刀切会把正文删光）。
+     所以只认这两种：
+       ① 名字在下面这份名单里（MVU 生态的通用指令标签）；
+       ② 名字里带下划线（Content_Target / think_nya 这种一看就是给程序用的）。
+     大写字母**不作为**依据：<Game> / <Scene> / <Summary> 这类更可能是正文容器。 */
+  var HIDE_TAG_NAMES = ['updatevariable', 'jsonpatch', 'statusplaceholderimpl', 'analysis',
+    'disclaimer', 'think', 'thinking', 'reasoning', 'variablereplace', 'variableupdate',
+    'variable_update', 'mvu'];
+
+  function isInstructionTag(name) {
+    var n = String(name || '').toLowerCase();
+    if (!n || HTML_TAGS[n]) return false;
+    if (n.indexOf('_') >= 0) return true;
+    return HIDE_TAG_NAMES.indexOf(n) >= 0;
+  }
+
   var ANY_TAG_RE = /<\/?([A-Za-z][A-Za-z0-9_]*)\b[^>]*>/g;
   function findHiddenBlock(str) {
     var m;
     ANY_TAG_RE.lastIndex = 0;
     while ((m = ANY_TAG_RE.exec(str))) {
-      if (HTML_TAGS[m[1].toLowerCase()]) continue;
+      if (!isInstructionTag(m[1])) continue;
       var isOpen = m[0].charAt(1) !== '/';
       /* 配另一半：开标签往后找闭标签，闭标签往前找开标签 */
       var mate = new RegExp((isOpen ? '<\\/' : '<') + m[1] + '\\b[^>]*>', 'ig');
@@ -244,11 +262,14 @@
   var HIDE_REGEX_FLAG = '__vmvuHide';      /* 打个记号，方便认出这是本扩展登记的 */
 
   function hideFindRegexSource() {
-    /* (?!…\b) 里列出所有正经 HTML 标签名，命中它们的整块不动 */
+    /* 名字部分：要么在指令名单里，要么带下划线。
+       notHtml 那条负向前瞻保证 <p> <br> 这些正经 HTML 不会被当成名字。 */
+    var byName = '(?:' + HIDE_TAG_NAMES.join('|') + ')';
+    var byUnderscore = '[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*';
     var notHtml = '(?!(?:' + Object.keys(HTML_TAGS).sort().join('|') + ')\\b)';
-    /* ① 未知标签的整块  ② 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
+    /* ① 指令标签的整块  ② 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
     return '(?:' +
-      '<' + notHtml + '([A-Za-z][A-Za-z0-9_]*)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>' +
+      '<' + notHtml + '(' + byName + '|' + byUnderscore + ')\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>' +
       '|\\{\\s*visual[-\\s]?mvu\\s*(?:[:：]\\s*[^}]*)?\\}' +
       '|\\{\\s*[:：]\\s*[^}]*[+\\-=＝][^}]*\\}' +
       '|\\[\\s*visual[-\\s]?mvu\\s*\\]' +
@@ -269,12 +290,28 @@
       var st = ctx && ctx.extensionSettings;
       if (!st) return false;                       /* 不是酒馆环境（比如独立预览） */
       if (!Array.isArray(st.regex)) st.regex = [];
-      /* 已经登记过就不动它 —— 用户可能自己停用或改过，别跟他抢 */
-      if (st.regex.some(isOurs)) return true;
+      var want = hideFindRegexString();
+      /* 已经登记过：只把关掉/改坏的「规则内容」补回来，但仍尊重用户对「停用」的选择 */
+      for (var i = 0; i < st.regex.length; i++) {
+        var s = st.regex[i];
+        if (!isOurs(s)) continue;
+        if (s.disabled) return true;               /* 用户自己停用的，就别再插手 */
+        if (s.findRegex !== want) {
+          s.findRegex = want;
+          s.replaceString = '';
+          s.placement = [2];
+          s.markdownOnly = true;
+          s.promptOnly = false;
+          s[HIDE_REGEX_FLAG] = true;
+          if (typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+          log('隐藏指令块的正则已更新到当前版本');
+        }
+        return true;
+      }
       var script = {
         id: 'vmvu-hide-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
         scriptName: HIDE_REGEX_NAME,
-        findRegex: hideFindRegexString(),
+        findRegex: want,
         replaceString: '',
         trimStrings: [],
         placement: [2],                            /* 2 = AI 输出 */
