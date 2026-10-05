@@ -431,6 +431,26 @@ body.vm-page { background: #07070a; min-height: 100vh; }
   color: var(--vm-text-faint); max-width: 62%;
 }
 
+/* ---------------- 自由卡片：只放一段文字 / 一张图片 ---------------- */
+.vm-card.vm-bare {
+  background: none; border-color: transparent; box-shadow: none; padding: 0;
+}
+.vm-card.vm-bare:hover { border-color: transparent; box-shadow: none; }
+.vm-card-body-free { padding: 0; height: 100%; }
+.vm-val-wrap-free { padding: 0; height: 100%; }
+.vm-free-text {
+  white-space: pre-wrap; word-break: break-word;
+  width: 100%; text-align: center;
+}
+.vm-free-holder { opacity: 0.55; text-align: center; width: 100%; }
+.vm-free-img {
+  display: block; width: 100%; height: 100%;
+  object-fit: contain;              /* 不裁切，保持原比例 */
+  transform-origin: center center;
+  pointer-events: none;             /* 拖动整块卡片，别被图片吃掉事件 */
+  user-select: none;
+}
+
 /* ---------------- 设置分页 ---------------- */
 .vm-tabs-bar {
   display: flex; gap: 2px; flex-wrap: wrap;

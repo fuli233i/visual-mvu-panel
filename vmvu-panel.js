@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.14';
+  var BUILD = '2026-10-05.15';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -319,7 +319,7 @@ var TRASH_SVG =
         变量: String(c.变量 || ''),
         显示名: String(c.显示名 || c.变量 || '未命名'),
         填值说明: String(c.填值说明 || ''),
-        样式: ['进度条', '文本', '是或否', '数值'].indexOf(c.样式) >= 0 ? c.样式 : '文本',
+        样式: ['进度条', '文本', '是或否', '数值', '自定义文字', '图片'].indexOf(c.样式) >= 0 ? c.样式 : '文本',
         min: num(c.min, 0),
         max: num(c.max, 100),
         单位: String(c.单位 || ''),
@@ -341,6 +341,10 @@ var TRASH_SVG =
         待设置: !!c.待设置,
         背景色: /^#[0-9a-f]{6}$/i.test(String(c.背景色 || '')) ? c.背景色 : '',
         文字色: /^#[0-9a-f]{6}$/i.test(String(c.文字色 || '')) ? c.文字色 : '',
+        /* 「自定义文字 / 图片」这两种自由卡片用的字段 */
+        自定义文字: String(c.自定义文字 || ''),
+        图片: String(c.图片 || ''),
+        图片旋转: clamp(num(c.图片旋转, 0), -180, 180),
         字体: FONTS.some(function (f) { return f.id === c.字体; }) ? c.字体 : 'inherit',
         字号: num(c.字号, 0),                       /* 0 = 随区域大小自适应 */
         进度条粗细: clamp(num(c.进度条粗细, 8), 3, 26),
@@ -1549,17 +1553,24 @@ var TRASH_SVG =
     if (cfg.字号 > 0) card.style.fontSize = cfg.字号 + 'px';
     if (S.editingId === id) card.classList.add('vm-editing');
 
-    var head = el('div', 'vm-card-head');
-    head.appendChild(buildIcon(cfg.图标));
-    head.appendChild(el('span', 'vm-name', esc(cfg.显示名)));
-    card.appendChild(head);
+    /* 自由卡片（自定义文字 / 图片）不显示标题行 —— 整块就是内容 */
+    var isFree = (cfg.样式 === '自定义文字' || cfg.样式 === '图片');
+    if (cfg.样式 === '图片') card.classList.add('vm-bare');     /* 无边框、无底色、无阴影 */
+    if (!isFree) {
+      var head = el('div', 'vm-card-head');
+      head.appendChild(buildIcon(cfg.图标));
+      head.appendChild(el('span', 'vm-name', esc(cfg.显示名)));
+      card.appendChild(head);
+    }
 
     var body = el('div', 'vm-card-body');
+    if (isFree) body.classList.add('vm-card-body-free');
     /* buildValue 返回的是 DocumentFragment（没有 classList），
        所以先套一层真正的 div，白框与点击事件都挂在这层上 */
     var valWrap = el('div', 'vm-val-wrap');
+    if (isFree) valWrap.classList.add('vm-val-wrap-free');
     valWrap.appendChild(buildValue(cfg));
-    if (S.editingId === id) {
+    if (S.editingId === id && !isFree) {      /* 自由卡片没有「就地改值」 */
       valWrap.classList.add('vm-edit-target');
       valWrap.setAttribute('title', '点击修改这个变量的值');
       valWrap.addEventListener('click', function (e) {
@@ -1671,6 +1682,31 @@ var TRASH_SVG =
       row2.appendChild(el('span', 'vm-value', raw === undefined ? '—' : esc(fmt(num(raw, 0)))));
       if (cfg.单位) row2.appendChild(el('span', 'vm-unit', esc(cfg.单位)));
       frag.appendChild(row2);
+      return frag;
+    }
+
+    /* ---- 自由卡片：整块只放你自己写的东西，不读变量 ---- */
+    if (style === '自定义文字') {
+      frag.appendChild(el('div', 'vm-text-val vm-free-text',
+        esc(cfg.自定义文字 || '（点右下角齿轮写文字）')));
+      return frag;
+    }
+    if (style === '图片') {
+      if (!cfg.图片) {
+        frag.appendChild(el('div', 'vm-text-val vm-free-holder', '（点右下角齿轮选图片）'));
+        return frag;
+      }
+      var im = document.createElement('img');
+      im.className = 'vm-free-img';
+      im.alt = '';
+      im.src = cfg.图片;
+      im.style.transform = 'rotate(' + num(cfg.图片旋转, 0) + 'deg)';
+      im.addEventListener('error', function () {
+        if (im.parentNode) {
+          im.parentNode.replaceChild(el('div', 'vm-text-val vm-free-holder', '（图片加载失败）'), im);
+        }
+      });
+      frag.appendChild(im);
       return frag;
     }
 
@@ -2807,7 +2843,10 @@ var TRASH_SVG =
     '进度条': { range: true, unit: true, tone: true, hint: '按 min~max 换算成百分比宽度' },
     '数值':   { range: true, unit: true, tone: false, hint: '只显示数字，可带单位（min/max 仅用于越界提示）' },
     '文本':   { range: false, unit: false, tone: false, hint: '直接显示变量的文字内容，超长会自动截断' },
-    '是或否': { range: false, unit: false, tone: false, hint: '把变量当布尔值：是 / 否（true、是、1 都算「是」）' }
+    '是或否': { range: false, unit: false, tone: false, hint: '把变量当布尔值：是 / 否（true、是、1 都算「是」）' },
+    /* 下面两种是「不绑变量」的自由卡片：整块只放你写的东西 */
+    '自定义文字': { range: false, unit: false, tone: false, free: true, hint: '整块只显示你写的一段文字（不绑变量、AI 不管它）' },
+    '图片':       { range: false, unit: false, tone: false, free: true, img: true, hint: '整块只放一张图片：没有边框、没有底色，可旋转' }
   };
 
   /* ---------------- 图片处理 ---------------- */
@@ -2845,10 +2884,10 @@ var TRASH_SVG =
     });
   }
 
-  function readImageFile(file) {
+  function readImageFile(file, maxSide) {
     if (!file || !/^image\//.test(file.type || '')) return Promise.reject(new Error('请拖入图片文件'));
     if (file.size > 8 * 1024 * 1024) return Promise.reject(new Error('图片太大了（超过 8MB）'));
-    return shrinkImage(file, 256);
+    return shrinkImage(file, maxSide || 256);
   }
 
   /* ---------------- 卡片设置 ---------------- */
@@ -2870,7 +2909,8 @@ var TRASH_SVG =
 
     /* ---- 基本 ---- */
     var iVar = input(cfg.变量, '如：好感度 或 背包.金币');
-    body.appendChild(field('变量路径（相对 stat_data，用 . 分层）', iVar));
+    var varField = field('变量路径（相对 stat_data，用 . 分层）', iVar);
+    body.appendChild(varField);
 
     var iName = input(cfg.显示名, '留空则用变量名');
     var iHint = document.createElement('textarea');
@@ -2881,14 +2921,17 @@ var TRASH_SVG =
     iHint.style.cssText = 'resize:vertical;min-height:64px;font-family:inherit;line-height:1.5';
     var nameField = field('显示名', iName);
     body.appendChild(nameField);
-    body.appendChild(field('告诉 AI 这里填什么（会临时注入给 AI 看）', iHint));
+    var hintField = field('告诉 AI 这里填什么（会临时注入给 AI 看）', iHint);
+    body.appendChild(hintField);
 
     /* 展示样式：跟「字体」一样用自绘下拉，不用系统原生 select */
     var sStyle = dropdown([
       { value: '进度条', label: '进度条', hint: '按 min~max 换算成百分比宽度' },
       { value: '文本',   label: '文本',   hint: '直接显示变量的文字内容' },
       { value: '是或否', label: '是或否', hint: '把变量当布尔值：是 / 否' },
-      { value: '数值',   label: '数值',   hint: '只显示数字，可带单位' }
+      { value: '数值',   label: '数值',   hint: '只显示数字，可带单位' },
+      { value: '自定义文字', label: '自定义文字', hint: '整块只显示你写的文字，不绑变量' },
+      { value: '图片',       label: '图片',       hint: '整块只放一张图片：无边框无底色，可旋转' }
     ], cfg.样式, function () { syncFields(); });
     var styleHint = el('div', 'vm-hint', '');
     var styleBox = el('div');
@@ -3159,6 +3202,123 @@ var TRASH_SVG =
       '留「跟随主题」就用主题的文字色。变量区底色偏浅（比如白底）时，选深色字才不会糊在一起。'));
     stylePage.appendChild(field('变量区文字色', inkBox));
 
+    /* ---- 自由卡片①：自定义文字（样式选「自定义文字」时才显示） ---- */
+    var iFreeText = document.createElement('textarea');
+    iFreeText.className = 'vm-input';
+    iFreeText.rows = 4;
+    iFreeText.placeholder = '写点什么…可以换行';
+    iFreeText.value = cfg.自定义文字 || '';
+    iFreeText.style.cssText = 'resize:vertical;min-height:70px;font-family:inherit;line-height:1.5';
+    iFreeText.addEventListener('input', function () {
+      cfg.自定义文字 = iFreeText.value;
+      var c = liveCard();
+      var t = c && c.querySelector('.vm-free-text');
+      if (t) t.textContent = cfg.自定义文字 || '（点右下角齿轮写文字）';
+    });
+    var freeTextField = field('卡片里的文字', iFreeText);
+    freeTextField.appendChild(el('div', 'vm-hint', '这段文字不绑变量，AI 不会碰它。字号 / 字体 / 文字色都按上面那几项走。'));
+    stylePage.appendChild(freeTextField);
+
+    /* ---- 自由卡片②：图片（样式选「图片」时才显示）---- */
+    var imgState = { 值: cfg.图片 || '' };
+    var pvWrap = el('div');
+    var pvDrop = el('div', 'vm-dropzone',
+      '<div class="vm-dropzone-main">把图片拖到这里</div>' +
+      '<div class="vm-dropzone-sub">或点击选择文件 · 也可以直接 Ctrl+V 粘贴</div>');
+    var pvFile = document.createElement('input');
+    pvFile.type = 'file';
+    pvFile.accept = 'image/*';
+    pvFile.style.display = 'none';
+    var pvStatus = el('div', 'vm-hint', '');
+    var pvUrl = input('', '或直接填图片 URL（https://…）');
+    var pvUrlRow = el('div', 'vm-row');
+    pvUrlRow.style.marginTop = '6px';
+    pvUrlRow.appendChild(pvUrl);
+    pvWrap.appendChild(pvDrop);
+    pvWrap.appendChild(pvFile);
+    pvWrap.appendChild(pvStatus);
+    pvWrap.appendChild(pvUrlRow);
+    pvWrap.appendChild(el('div', 'vm-hint', '拖入的图会压缩后存进布局（最大边 1024px），不依赖网络。'));
+
+    function applyFreeImage(v) {
+      imgState.值 = v;
+      cfg.图片 = v;
+      render();                 /* 图片内容变了，整块重画（占位提示 / 加载失败都在里面处理） */
+    }
+    function loadFreeImage(f) {
+      pvStatus.textContent = '正在处理图片…';
+      readImageFile(f, 1024).then(function (res) {
+        applyFreeImage(res.data);
+        pvStatus.textContent = '已载入 ' + res.w + '×' + res.h +
+          '（已压缩，约 ' + Math.round(res.data.length / 1024) + ' KB）';
+        pvUrl.value = '';
+      }).catch(function (err) {
+        pvStatus.textContent = '';
+        pvStatus.appendChild(el('span', 'vm-warn', '载入失败：' + err.message));
+      });
+    }
+    pvDrop.addEventListener('click', function () { pvFile.click(); });
+    pvFile.addEventListener('change', function () {
+      if (pvFile.files && pvFile.files[0]) loadFreeImage(pvFile.files[0]);
+      pvFile.value = '';
+    });
+    pvDrop.addEventListener('dragover', function (e) { e.preventDefault(); pvDrop.classList.add('over'); });
+    pvDrop.addEventListener('dragleave', function () { pvDrop.classList.remove('over'); });
+    pvDrop.addEventListener('drop', function (e) {
+      e.preventDefault(); pvDrop.classList.remove('over');
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) loadFreeImage(f);
+    });
+    pvDrop.addEventListener('paste', function (e) {
+      var items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type && items[i].type.indexOf('image') === 0) {
+          var f = items[i].getAsFile();
+          if (f) { loadFreeImage(f); e.preventDefault(); return; }
+        }
+      }
+    });
+    pvUrl.addEventListener('change', function () {
+      var u = pvUrl.value.trim();
+      if (!u) return;
+      applyFreeImage(u);
+      pvStatus.textContent = '使用外部图片 URL（不会存进布局，换设备可能失效）';
+    });
+
+    /* 旋转：-180° ~ 180°，双击复位 */
+    var rotRange = document.createElement('input');
+    rotRange.type = 'range';
+    rotRange.min = '-180'; rotRange.max = '180'; rotRange.step = '1';
+    rotRange.value = String(num(cfg.图片旋转, 0));
+    var rotLabel = el('div', 'vm-hint', num(cfg.图片旋转, 0) + '°');
+    function paintRot() {
+      var c = liveCard();
+      var im = c && c.querySelector('.vm-free-img');
+      if (im) im.style.transform = 'rotate(' + num(cfg.图片旋转, 0) + 'deg)';
+    }
+    rotRange.addEventListener('input', function () {
+      cfg.图片旋转 = parseInt(rotRange.value, 10) || 0;
+      rotLabel.textContent = cfg.图片旋转 + '°';
+      paintRot();
+    });
+    rotRange.addEventListener('change', function () { saveLayout(); });
+    rotRange.addEventListener('dblclick', function () {
+      rotRange.value = '0';
+      cfg.图片旋转 = 0;
+      rotLabel.textContent = '0°';
+      paintRot();
+      saveLayout();
+    });
+    var rotBox = el('div');
+    rotBox.appendChild(rotRange);
+    rotBox.appendChild(rotLabel);
+    var rotField = field('图片旋转（双击滑块复位）', rotBox);
+
+    var imgField = field('整块显示的图片', pvWrap);
+    stylePage.appendChild(imgField);
+    stylePage.appendChild(rotField);
+
     /* ---- 圆角开关 ---- */
     var radiusState = { on: cfg.圆角 !== false };
     var chkRadius = document.createElement('input');
@@ -3277,11 +3437,15 @@ var TRASH_SVG =
       closeModal(); render();
     }));
     foot.push(btn(isCreate ? '创建' : '保存', null, function () {
-      var v = iVar.value.trim();
-      if (!v) { iVar.focus(); iVar.style.borderColor = '#ff6a6a'; return; }
-      cfg.变量 = v;
-      cfg.显示名 = iName.value.trim() || v;
       cfg.样式 = sStyle.vmValue();
+      var freeStyle = (cfg.样式 === '自定义文字' || cfg.样式 === '图片');
+      var v = iVar.value.trim();
+      if (!freeStyle && !v) { iVar.focus(); iVar.style.borderColor = '#ff6a6a'; return; }
+      cfg.变量 = freeStyle ? '' : v;
+      cfg.显示名 = iName.value.trim() || (freeStyle ? '自由卡片' : v);
+      cfg.自定义文字 = iFreeText.value;
+      cfg.图片 = imgState.值;
+      cfg.图片旋转 = parseInt(rotRange.value, 10) || 0;
       cfg.min = num(iMin.value, 0);
       cfg.max = num(iMax.value, 100);
       cfg.单位 = iUnit.value.trim();
@@ -3292,7 +3456,7 @@ var TRASH_SVG =
       cfg.边框线型 = borderState.style;
       cfg.圆角 = radiusState.on;
       cfg.填值说明 = iHint.value.trim();
-      ensureVariable(cfg);          /* 填了个还没有的变量路径 → 先建出来给默认值 */
+      if (!freeStyle) ensureVariable(cfg);   /* 填了个还没有的变量路径 → 先建出来给默认值 */
       if (!id && seed && seed.占位id) id = seed.占位id;
       delete cfg.待设置;
       S.layout.卡片[id || uid()] = cfg;
@@ -3306,6 +3470,13 @@ var TRASH_SVG =
     function syncFields() {
       var st = sStyle.vmValue();
       var f = STYLE_FIELDS[st] || STYLE_FIELDS['文本'];
+      var free = !!f.free;
+      /* 自由卡片（自定义文字 / 图片）不绑变量：把变量相关的字段收起来 */
+      varField.style.display = free ? 'none' : '';
+      hintField.style.display = free ? 'none' : '';
+      freeTextField.style.display = (st === '自定义文字') ? '' : 'none';
+      imgField.style.display = (st === '图片') ? '' : 'none';
+      rotField.style.display = (st === '图片') ? '' : 'none';
       rangeField.style.display = f.range ? '' : 'none';
       unitField.style.display = f.unit ? '' : 'none';
       toneField.style.display = f.tone ? '' : 'none';
@@ -3734,6 +3905,7 @@ var TRASH_SVG =
     cleanupWorldbook: cleanupWorldbook,
     refit: refitAll,
     applyTheme: applyTheme,                  /* 重新套用主题（外部改完亮度/对比度后可调用） */
+    render: render,                          /* 重画一遍（调试 / 自动化用） */
     healVariables: healMissingVariables,      /* 把变量区里还缺的变量补出来 */
     applyMarker: applyMarker,                 /* 解析 AI 写在 {visual-mvu: …} 里的变量改动 */
     /** 加一张变量区（也会同步世界书） */
