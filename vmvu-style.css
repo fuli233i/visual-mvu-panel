@@ -454,6 +454,8 @@ body.vm-page { background: #07070a; min-height: 100vh; }
   user-select: none;
 }
 .vm-card.vm-bare .vm-val-wrap { display: flex; align-items: center; justify-content: center; }
+/* 按像素碰撞时整张卡会临时 pointer-events:none，齿轮和缩放手柄要能单独接回来 */
+.vm-card.vm-bare .vm-card-gear, .vm-card.vm-bare .vm-handle { pointer-events: auto; }
 
 /* ---------------- 设置分页 ---------------- */
 .vm-tabs-bar {

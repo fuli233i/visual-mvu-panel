@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.17';
+  var BUILD = '2026-10-05.18';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -1581,6 +1581,12 @@ var TRASH_SVG =
     }
     body.appendChild(valWrap);
     card.appendChild(body);
+    /* 图片卡片：透明背景的地方不吃鼠标（碰撞箱 = 有颜色的那部分）。
+       注意要等 body/valWrap 都挂上去了再找 .vm-free-img。 */
+    if (cfg.样式 === '图片') {
+      var freeIm = card.querySelector('.vm-free-img');
+      if (freeIm) setupPixelHit(card, freeIm);
+    }
 
     /* 字号自适应：挂在卡片上，缩放时实时重算 */
     card.__vmBarSet = num(cfg.进度条粗细, 8);     /* 用户设的进度条粗细，fitCard 会按需要收 */
@@ -2933,6 +2939,85 @@ var TRASH_SVG =
     run();
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
     setTimeout(run, 60);
+  }
+
+  /* ---------------- 图片卡片的「按像素碰撞」 ----------------
+   * 图片背景透明时，透明的地方不该吃鼠标。做法：
+   *   指针移到透明像素上 → 把这张卡的 pointer-events 关掉（事件自然落到下面的卡片/画布）
+   *   指针回到不透明像素 → 再打开
+   * 透明度表在图片载入时生成一次（最长边压到 160px，够用又便宜）。 */
+  function buildAlphaMask(im) {
+    try {
+      var nw = im.naturalWidth, nh = im.naturalHeight;
+      if (!nw || !nh) return null;
+      var k = Math.min(1, 160 / Math.max(nw, nh));
+      var w = Math.max(1, Math.round(nw * k));
+      var h = Math.max(1, Math.round(nh * k));
+      var cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      var g = cv.getContext('2d');
+      g.clearRect(0, 0, w, h);
+      g.drawImage(im, 0, 0, w, h);
+      var data = g.getImageData(0, 0, w, h).data;
+      var alpha = new Uint8Array(w * h);
+      var anyTransparent = false;
+      for (var i = 0; i < w * h; i++) {
+        alpha[i] = data[i * 4 + 3];
+        if (alpha[i] < 250) anyTransparent = true;
+      }
+      return anyTransparent ? { w: w, h: h, alpha: alpha } : null;   /* 整张不透明就不用管 */
+    } catch (e) {
+      return null;            /* 跨域图片取不到像素 → 退回普通矩形碰撞 */
+    }
+  }
+
+  /* 这个点是否落在图片「有颜色」的部分 */
+  function hitOpaquePixel(card, im, clientX, clientY) {
+    var mask = im.__vmMask;
+    if (!mask) return true;
+    var r = im.getBoundingClientRect();              /* 旋转不影响中心点 */
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var w = im.offsetWidth, h = im.offsetHeight;     /* 布局尺寸（不受 rotate 影响） */
+    if (!w || !h) return true;
+    var deg = num(card.__vmRot, 0) * Math.PI / 180;
+    var dx = clientX - cx, dy = clientY - cy;
+    var c = Math.cos(-deg), s = Math.sin(-deg);      /* 反向旋转回图片自己的坐标系 */
+    var lx = dx * c - dy * s;
+    var ly = dx * s + dy * c;
+    var u = 0.5 + lx / w, v = 0.5 + ly / h;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return false;
+    var px = Math.min(mask.w - 1, Math.max(0, Math.floor(u * mask.w)));
+    var py = Math.min(mask.h - 1, Math.max(0, Math.floor(v * mask.h)));
+    return mask.alpha[py * mask.w + px] >= 12;       /* 基本全透明 → 不算命中 */
+  }
+
+  function setupPixelHit(card, im) {
+    card.__vmMaskState = 'armed';
+    function ready() {
+      if (!im.__vmMask) im.__vmMask = buildAlphaMask(im);
+      card.__vmMaskState = im.__vmMask ? 'ready' : 'opaque-or-unreadable';
+    }
+    if (im.complete && im.naturalWidth) ready();
+    im.addEventListener('load', ready);
+
+    function restore(e) {
+      if (!hitOpaquePixel(card, im, e.clientX, e.clientY)) return;
+      card.style.pointerEvents = '';
+      card.__vmGhost = false;
+      document.removeEventListener('mousemove', restore);
+    }
+    card.addEventListener('mousemove', function (e) {
+      var hit = im.__vmMask ? hitOpaquePixel(card, im, e.clientX, e.clientY) : null;
+      card.__vmLastMove = { x: e.clientX, y: e.clientY, hit: hit };
+      if (card.__vmGhost || !im.__vmMask) return;
+      if (hit) return;
+      card.style.pointerEvents = 'none';             /* 透明处：让鼠标穿过去 */
+      card.__vmGhost = true;
+      document.addEventListener('mousemove', restore);
+    });
+    /* 注意：这里不能监听 mouseleave 去恢复 ——
+       把 pointer-events 关掉的那一瞬间浏览器就会给卡片发 mouseleave，
+       立刻恢复的话等于白忙一场（会看到「刚穿透又变回去」）。 */
   }
 
   /* 把图片压到 maxSide 以内，避免布局 JSON 过大。带透明通道输出 PNG，否则 JPEG */
