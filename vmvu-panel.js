@@ -14,7 +14,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.8';
+  var BUILD = '2026-10-05.9';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -1495,8 +1495,9 @@ var TRASH_SVG =
       startMove(e, id, cfg);
     });
 
-    /* 点一下（没拖动）就打开设置；走新建流程，取消则把这个占位删掉 */
+    /* 点一下（没拖动）才打开设置；拖着挪位置/改大小时松手不弹（拖动会顺带触发 click） */
     card.addEventListener('click', function (e) {
+      if (Date.now() < suppressClickUntil) return;
       if (e.target.closest && e.target.closest('.vm-card-gear')) return;
       e.stopPropagation();
       openCardSettings(null, true, {
@@ -1964,6 +1965,8 @@ var TRASH_SVG =
   function exitEditMode() {
     if (!S.editingId) return;
     S.editingId = null;
+    /* 记一下「刚刚退出修改态」：紧接着的那次 mousedown 不该被当成「拖出新变量区」 */
+    S.editExitedAt = Date.now();
     render();
   }
 
@@ -2379,6 +2382,9 @@ var TRASH_SVG =
    * 表现就是「取消一次后新建拖不出东西，只有一个点」。
    */
   var drag = { mode: null, sx: 0, sy: 0, ox: 0, oy: 0, ow: 0, oh: 0, id: null, cfg: null, dir: '', draft: null, alt: false, moved: false };
+  /* 拖动 / 缩放结束后的这段时间里，忽略跟着冒出来的 click
+     （不然拖完一张「未设置」的卡片、松手就会弹出设置界面） */
+  var suppressClickUntil = 0;
   var DOC_BOUND = false;
 
   /* 鼠标事件按帧合并：一帧最多算一次，拖动才跟手 */
@@ -2512,6 +2518,9 @@ var TRASH_SVG =
     }
 
     /* 清空状态（先清，避免弹窗操作期间被再次触发） */
+    if ((mode === 'move' || mode === 'resize') && drag.moved) {
+      suppressClickUntil = Date.now() + 200;      /* 拖过了 → 松手别弹设置（click 紧跟 mouseup，200ms 足够） */
+    }
     drag.mode = null; drag.draft = null; drag.id = null; drag.cfg = null; drag.dir = '';
     drag.alt = false; drag.moved = false;
 
@@ -2554,6 +2563,10 @@ var TRASH_SVG =
     canvas.addEventListener('mousedown', function (e) {
       if (e.button !== 0) return;
       if (e.target.closest && e.target.closest('.vm-card')) return;
+      /* 正在就地改数值（或刚点空白退出改值）：这一下只算「退出编辑」，
+         不要顺手拖出一个新的变量区 —— 以前点空白会把草稿框拖出来、松手就多一张卡。 */
+      if (S.editingId) { exitEditMode(); return; }
+      if (Date.now() - (S.editExitedAt || 0) < 350) return;
       var r = canvas.getBoundingClientRect();
       /* 关键：卡片层可能被滚轮平移过（translateY），
          鼠标坐标必须先减去这个位移才是画布坐标系里的位置，
