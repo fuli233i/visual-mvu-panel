@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.11';
+  var BUILD = '2026-10-05.12';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -2678,6 +2678,7 @@ var TRASH_SVG =
      祖先可能带 transform / filter，position:fixed 会被它“抓住”，
      弹窗就会跑到聊天顶部去（点哪一层的设置都不对）。 */
   var currentOverlay = null;
+  var modalCancelHook = null;      /* 「新建变量区」弹窗被关掉时要执行的收尾（删占位卡） */
 
   /* 弹窗挂在 body 上，拿不到 #vmvu-root 上的主题变量 —— 把根节点的行内变量复制一份过去，
      否则 var(--vm-panel-bg) 全部解析失败，背景就变透明了。 */
@@ -2697,12 +2698,17 @@ var TRASH_SVG =
       (S.root && S.root.querySelector('.vm-overlay')) ||
       document.querySelector('body > .vm-overlay');
     currentOverlay = null;
+    /* 「新建变量区」弹窗不管怎么关（× / 点外面 / 取消），都把那张占位卡收掉。
+       保存那条路会先把钩子清掉（占位卡会被原地改成正式卡）。 */
+    var hook = modalCancelHook;
+    modalCancelHook = null;
     if (!ov || !ov.parentNode) return;
     /* 自绘下拉 / 取色器把监听挂在 document 上，弹窗移除时顺手摘掉 */
     $$('.vm-dd, .vm-picker', ov).forEach(function (n) {
       if (typeof n.vmDestroy === 'function') { try { n.vmDestroy(); } catch (e) {} }
     });
     ov.parentNode.removeChild(ov);
+    if (hook) { try { hook(); } catch (e) { console.warn('[可视化面板] 取消钩子出错', e); } }
   }
 
   /* 分页设置弹窗：把设置拆成几页，不再全都摊在一个平面上。
@@ -3269,6 +3275,7 @@ var TRASH_SVG =
       document.removeEventListener('paste', onDocPaste);
       /* 从占位卡片进来的：取消就把占位删掉 */
       if (seed && seed.占位id) { delete S.layout.卡片[seed.占位id]; saveLayout(); }
+      modalCancelHook = null;
       closeModal(); render();
     }));
     foot.push(btn(isCreate ? '创建' : '保存', null, function () {
@@ -3292,6 +3299,7 @@ var TRASH_SVG =
       delete cfg.待设置;
       S.layout.卡片[id || uid()] = cfg;
       document.removeEventListener('paste', onDocPaste);
+      modalCancelHook = null;        /* 占位卡已经转正，别让关闭钩子把它删了 */
       saveLayout(); closeModal(); render(); syncWorldBook();
       var size = JSON.stringify(S.layout).length;
       if (size > 300 * 1024) console.warn('[可视化面板] 布局已 ' + Math.round(size / 1024) + ' KB，主要是内嵌图片，注意别加太多大图');
@@ -3318,6 +3326,17 @@ var TRASH_SVG =
 
     /* 关闭时摘掉全局 paste 监听 */
     if (ov) {
+      /* 从占位卡进来的「新建」弹窗：点 × 或点外面也等于取消 —— 把那张占位卡收掉，
+         不然交互区会留着一个空框，看起来像「又多出来一张卡」。 */
+      if (isCreate && seed && seed.占位id) {
+        (function (pid) {
+          modalCancelHook = function () {
+            if (!S.layout || !S.layout.卡片 || !S.layout.卡片[pid]) return;
+            delete S.layout.卡片[pid];
+            saveLayout(); render();
+          };
+        })(seed.占位id);
+      }
       var mo = new MutationObserver(function () {
         if (!document.body.contains(ov)) {
           document.removeEventListener('paste', onDocPaste);
