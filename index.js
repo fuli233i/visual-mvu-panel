@@ -110,6 +110,10 @@
    * 把出现在 findRegex 里的标签名收集起来。 */
   var HIDE_TAG_NAMES = ['updatevariable', 'jsonpatch', 'statusplaceholderimpl', 'analysis',
     'disclaimer', 'think', 'thinking', 'reasoning', 'cot', 'scratchpad', 'inner_monologue'];
+  /* 一个指令块最多这么长。超过就不认（宁可不删）——
+     踩过的坑：AI 漏写 </UpdateVariable> 时，匹配会一路吃到下一个闭标签，
+     把中间一大段正文吞掉。 */
+  var HIDE_BLOCK_MAX = 4000;
 
   /* 这张卡自己用正则处理了哪些标签？（只算会影响显示的规则） */
   var handledCache = null, handledCacheAt = 0;
@@ -162,6 +166,8 @@
       if (at < 0) return { index: m.index, text: m[0] };      /* 落单的半个标签，收掉它 */
       var from = Math.min(m.index, at);
       var to = Math.max(m.index, at) + (at < m.index ? m[0].length : atText.length);
+      /* 整块太长 → 多半是 AI 漏写闭标签，只收掉这个标签本身，别吞正文 */
+      if (to - from > HIDE_BLOCK_MAX) return { index: m.index, text: m[0] };
       return { index: from, text: str.slice(from, to) };
     }
     return null;
@@ -295,7 +301,7 @@
     /* ① 名单里的指令标签（卡没管才删）
        ② 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
     return '(?:' +
-      '<' + notHandled + '(' + HIDE_TAG_NAMES.join('|') + ')\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>' +
+      '<' + notHandled + '(' + HIDE_TAG_NAMES.join('|') + ')\\b[^>]*>[\\s\\S]{0,' + HIDE_BLOCK_MAX + '}?<\\/\\1\\s*>' +
       '|\\{\\s*visual[-\\s]?mvu\\s*(?:[:：]\\s*[^}]*)?\\}' +
       '|\\{\\s*[:：]\\s*[^}]*[+\\-=＝][^}]*\\}' +
       '|\\[\\s*visual[-\\s]?mvu\\s*\\]' +
