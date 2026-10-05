@@ -96,30 +96,60 @@
   /* 在一段纯文本里找出「下一个该整块藏起来的东西」。
      写法上刻意避开「先找开头再懒匹配结尾」那种回溯写法（长正文会卡），
      改成一次扫描找标签、再去配另一半，全程 O(n)。 */
-  /* 哪些标签算「给 AI / 程序看的指令」？
-     不能只按「是不是正经 HTML」判断 —— 有的卡拿自定义标签当**正文容器**
-     （实测踩过：正文整段包在 <game>…</game> 里，一刀切会把正文删光）。
-     所以只认这两种：
-       ① 名字在下面这份名单里（MVU 生态的通用指令标签）；
-       ② 名字里带下划线（Content_Target / think_nya 这种一看就是给程序用的）。
-     大写字母**不作为**依据：<Game> / <Scene> / <Summary> 这类更可能是正文容器。 */
-  var HIDE_TAG_NAMES = ['updatevariable', 'jsonpatch', 'statusplaceholderimpl', 'analysis',
-    'disclaimer', 'think', 'thinking', 'reasoning', 'variablereplace', 'variableupdate',
-    'variable_update', 'mvu'];
+  /* 哪些标签算「给 AI / 程序看的指令」要整块藏掉？
+   *
+   * 这条规则翻车过三次，所以现在是保守的三层：
+   *   ① HIDE_TAG_ALWAYS：MVU 生态的标准指令标签，**无条件**藏。
+   *      这几个绝不会是正文容器，放心删。
+   *   ② HIDE_TAG_MAYBE + 「名字带下划线」：这类只有**这张卡自己没管**才藏。
+   *      （踩过的坑：有卡把整段正文包在 <game>…</game> 里；
+   *        这次又踩了：有卡把正文包在 <LILY_STORY>…</LILY_STORY> 里，
+   *        然后用自己的正则把它美化成面板 —— 我们再删就等于把正文吞了。）
+   *   ③ 卡自己的「显示用正则」里点名过的标签，一律不碰。
+   *      卡既然写了针对它的正则，说明这个标签归它管（正文容器、美化面板、CG 渲染都是这种）。
+   *
+   * 判断「卡管了哪些标签」的办法：读这张卡 regex_scripts 里所有会影响显示的规则，
+   * 把出现在 findRegex 里的标签名收集起来。 */
+  var HIDE_TAG_ALWAYS = ['updatevariable', 'jsonpatch', 'statusplaceholderimpl', 'analysis'];
+  var HIDE_TAG_MAYBE = ['disclaimer', 'think', 'thinking', 'reasoning', 'cot', 'scratchpad'];
 
-  function isInstructionTag(name) {
+  /* 这张卡自己用正则处理了哪些标签？（只算会影响显示的规则） */
+  var handledCache = null, handledCacheAt = 0;
+  function cardHandledTags() {
+    var now = Date.now();
+    if (handledCache && (now - handledCacheAt) < 5000) return handledCache;
+    var out = {};
+    try {
+      var ctx = (window.SillyTavern && window.SillyTavern.getContext)
+        ? window.SillyTavern.getContext() : null;
+      var ch = ctx && ctx.characters && ctx.characters[ctx.characterId];
+      var list = (ch && ch.data && ch.data.extensions && ch.data.extensions.regex_scripts) || [];
+      list.forEach(function (s) {
+        if (!s || s.disabled) return;
+        if (s.promptOnly && !s.markdownOnly) return;      /* 只管提示词的，不影响显示 */
+        var re = /<([A-Za-z][A-Za-z0-9_-]*)/g, m, f = String(s.findRegex || '');
+        while ((m = re.exec(f))) out[m[1].toLowerCase()] = 1;
+      });
+    } catch (e) {}
+    handledCache = out; handledCacheAt = now;
+    return out;
+  }
+
+  function isInstructionTag(name, handled) {
     var n = String(name || '').toLowerCase();
     if (!n || HTML_TAGS[n]) return false;
-    if (n.indexOf('_') >= 0) return true;
-    return HIDE_TAG_NAMES.indexOf(n) >= 0;
+    if (HIDE_TAG_ALWAYS.indexOf(n) >= 0) return true;      /* ① 标准 MVU 标签 */
+    if (handled && handled[n]) return false;               /* ③ 卡自己管，别插手 */
+    if (n.indexOf('_') >= 0) return true;                  /* ② 一看就是给程序用的 */
+    return HIDE_TAG_MAYBE.indexOf(n) >= 0;
   }
 
   var ANY_TAG_RE = /<\/?([A-Za-z][A-Za-z0-9_]*)\b[^>]*>/g;
-  function findHiddenBlock(str) {
+  function findHiddenBlock(str, handled) {
     var m;
     ANY_TAG_RE.lastIndex = 0;
     while ((m = ANY_TAG_RE.exec(str))) {
-      if (!isInstructionTag(m[1])) continue;
+      if (!isInstructionTag(m[1], handled)) continue;
       var isOpen = m[0].charAt(1) !== '/';
       /* 配另一半：开标签往后找闭标签，闭标签往前找开标签 */
       var mate = new RegExp((isOpen ? '<\\/' : '<') + m[1] + '\\b[^>]*>', 'ig');
@@ -140,7 +170,7 @@
     return null;
   }
 
-  function maskCodeBlocksIn(text) {
+  function maskCodeBlocksIn(text, handled) {
     var nodes = [];
     var walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT, null);
     var n;
@@ -149,14 +179,14 @@
       if (!p) continue;
       if (p.closest && (p.closest('.' + HIDDEN_CLASS) || p.closest('#' + ROOT_ID))) continue;
       var v = n.nodeValue || '';
-      if (findHiddenBlock(v)) nodes.push(n);
+      if (findHiddenBlock(v, handled)) nodes.push(n);
     }
     nodes.forEach(function (node) {
       var rest = node.nodeValue;
       var frag = document.createDocumentFragment();
       var hit = false;
       while (rest) {
-        var best = findHiddenBlock(rest);
+        var best = findHiddenBlock(rest, handled);
         if (!best) break;
         hit = true;
         if (best.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, best.index)));
@@ -235,7 +265,7 @@
       if (text.querySelector('.' + HIDDEN_CLASS + ', .' + TRIGGER_CLASS)) return;
     }
     if (HIDE_TRIGGER) maskTriggerIn(text);
-    maskCodeBlocksIn(text);
+    maskCodeBlocksIn(text, cardHandledTags());
     mes.__vmvuMaskKey = text.textContent || '';
     mes.__vmvuMasked = text.querySelectorAll('.' + HIDDEN_CLASS + ', .' + TRIGGER_CLASS).length;
   }
@@ -261,15 +291,18 @@
   var HIDE_REGEX_NAME = '可视化MVU面板 · 隐藏指令块';
   var HIDE_REGEX_FLAG = '__vmvuHide';      /* 打个记号，方便认出这是本扩展登记的 */
 
-  function hideFindRegexSource() {
-    /* 名字部分：要么在指令名单里，要么带下划线。
-       notHtml 那条负向前瞻保证 <p> <br> 这些正经 HTML 不会被当成名字。 */
-    var byName = '(?:' + HIDE_TAG_NAMES.join('|') + ')';
-    var byUnderscore = '[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*';
+  function hideFindRegexSource(handled) {
+    /* notHtml：正经 HTML 标签名不碰；
+       notHandled：这张卡自己用正则管过的标签名，也不碰。 */
     var notHtml = '(?!(?:' + Object.keys(HTML_TAGS).sort().join('|') + ')\\b)';
-    /* ① 指令标签的整块  ② 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
+    var names = Object.keys(handled || {});
+    var notHandled = names.length ? ('(?!(?:' + names.join('|') + ')\\b)') : '';
+    var byMaybe = '(?:' + HIDE_TAG_MAYBE.join('|') + '|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*)';
+    /* ① 标准 MVU 指令标签（无条件删） ② 靠特征猜的（卡没管才删）
+       ③ 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
     return '(?:' +
-      '<' + notHtml + '(' + byName + '|' + byUnderscore + ')\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>' +
+      '<' + notHtml + '(' + HIDE_TAG_ALWAYS.join('|') + ')\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>' +
+      '|<' + notHtml + notHandled + '(' + byMaybe + ')\\b[^>]*>[\\s\\S]*?<\\/\\2\\s*>' +
       '|\\{\\s*visual[-\\s]?mvu\\s*(?:[:：]\\s*[^}]*)?\\}' +
       '|\\{\\s*[:：]\\s*[^}]*[+\\-=＝][^}]*\\}' +
       '|\\[\\s*visual[-\\s]?mvu\\s*\\]' +
@@ -277,7 +310,7 @@
       ')';
   }
   function hideFindRegexString() {
-    return '/' + hideFindRegexSource() + '/gi';
+    return '/' + hideFindRegexSource(cardHandledTags()) + '/gi';
   }
   function isOurs(s) {
     return !!(s && (s[HIDE_REGEX_FLAG] || s.scriptName === HIDE_REGEX_NAME));
@@ -285,6 +318,7 @@
 
   function ensureHideRegex() {
     try {
+      handledCache = null;                       /* 换聊天/换角色了，重新认一遍卡管了哪些标签 */
       var ctx = (window.SillyTavern && window.SillyTavern.getContext)
         ? window.SillyTavern.getContext() : null;
       var st = ctx && ctx.extensionSettings;
