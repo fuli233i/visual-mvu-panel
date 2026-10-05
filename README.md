@@ -50,6 +50,28 @@ https://github.com/fuli233i/visual-mvu-panel
 
 `[visual-mvu]` 和 `<visual-mvu>` 也认。标记本身会被自动隐藏，不会露在正文里。
 
+### {unvis}：让 AI 自己说清楚「哪些不该显示」
+
+注入说明会让 AI 把不想给玩家看的东西**夹在两个 `{unvis}` 中间**：
+
+```
+{unvis}{visual-mvu: 体力-5, 好感度=95}{unvis}
+```
+
+这两个标记之间的一切都会隐藏，**两个 `{unvis}` 本身也隐藏**。变量更新块、思考过程、
+内部备注都可以一并夹进去：
+
+```
+{unvis}
+<UpdateVariable>…</UpdateVariable>
+{visual-mvu: 体力-5}
+{unvis}
+```
+
+这是「让 AI 显式标注」的办法，比让扩展去猜哪个标签是给机器看的可靠得多
+（扩展猜过三次，分别误删过正文容器 `<game>`、`<LILY_STORY>` 和选项块）。
+夹在里面的内容照旧参与变量更新和面板识别 —— **只是不显示**。
+
 AI 写给程序看的那几段（`<UpdateVariable>` / `<JSONPatch>` / `<Analysis>` / `<disclaimer>` 等）
 扩展也会一起藏掉，**不需要角色卡自带正则**。往上翻旧消息、流式输出到一半，都看不见这些代码。
 

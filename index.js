@@ -43,6 +43,20 @@
   var TRIGGER_CLASS = 'vmvu-trigger';
   var HIDDEN_CLASS = 'vmvu-code';
 
+  /* ---------------- {unvis} 隐形开关 ----------------
+   * 约定：AI 把「不该给玩家看的东西」夹在两个 {unvis} 中间，例如
+   *     {unvis}{visual-mvu: 体力-5, 好感度=95}{unvis}
+   *     {unvis}<UpdateVariable>…</UpdateVariable>{unvis}
+   * 这两个 {unvis} 之间的一切都隐藏，两个 token 本身也隐藏。
+   *
+   * 这是「让 AI 自己说清楚」的办法：不用扩展去猜哪个标签是给机器看的
+   * （猜过三次都误伤了正文 / 选项块）。 */
+  var UNVIS_TOKEN = '{unvis}';
+  var UNVIS_PATTERNS = [
+    /\{\s*unvis\s*\}[\s\S]*?\{\s*unvis\s*\}/i,   /* 一整段（含两头的 token） */
+    /\{\s*unvis\s*\}/i                            /* 落单的（另一半被别的正则吃掉时） */
+  ];
+
   /* ---------------- 工具 ---------------- */
   function log() {
     try { console.log.apply(console, ['[可视化面板]'].concat([].slice.call(arguments))); } catch (e) {}
@@ -219,7 +233,18 @@
   }
 
   function maskTriggerIn(text) {
-    if (!HIDE_TRIGGER || !TRIGGER_PATTERNS.length) return;
+    if (!HIDE_TRIGGER) return;
+    /* 隐藏时把 {unvis} 那对开关也算进来：取「最靠左」的那个匹配，
+       所以 {unvis}{visual-mvu}{unvis} 会整段一起藏（而不是只藏中间那截）。 */
+    var patterns = UNVIS_PATTERNS.concat(TRIGGER_PATTERNS);
+    var findHide = function (s) {
+      var best = null;
+      patterns.forEach(function (re) {
+        var m = re.exec(s);
+        if (m && m[0] && (!best || m.index < best.index)) best = m;
+      });
+      return best;
+    };
     var nodes = [];
     var walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT, null);
     var n;
@@ -228,14 +253,14 @@
       if (!p) continue;
       /* 跳过已经藏起来的标记，以及面板自己生成的 DOM */
       if (p.closest && (p.closest('.' + TRIGGER_CLASS) || p.closest('#' + ROOT_ID))) continue;
-      if (n.nodeValue && findTrigger(n.nodeValue)) nodes.push(n);
+      if (n.nodeValue && findHide(n.nodeValue)) nodes.push(n);
     }
     nodes.forEach(function (node) {
       var rest = node.nodeValue;
       var frag = document.createDocumentFragment();
       var hit = false;
       while (true) {
-        var m = findTrigger(rest);
+        var m = findHide(rest);
         if (!m) break;
         hit = true;
         if (m.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, m.index)));
@@ -302,6 +327,8 @@
        ② 触发标记（含被别的正则吃掉「visual-mvu」后剩下的 {: …}） */
     return '(?:' +
       '<' + notHandled + '(' + HIDE_TAG_NAMES.join('|') + ')\\b[^>]*>[\\s\\S]{0,' + HIDE_BLOCK_MAX + '}?<\\/\\1\\s*>' +
+      '|\\{\\s*unvis\\s*\\}[\\s\\S]{0,' + HIDE_BLOCK_MAX + '}?\\{\\s*unvis\\s*\\}' +
+      '|\\{\\s*unvis\\s*\\}' +
       '|\\{\\s*visual[-\\s]?mvu\\s*(?:[:：]\\s*[^}]*)?\\}' +
       '|\\{\\s*[:：]\\s*[^}]*[+\\-=＝][^}]*\\}' +
       '|\\[\\s*visual[-\\s]?mvu\\s*\\]' +
