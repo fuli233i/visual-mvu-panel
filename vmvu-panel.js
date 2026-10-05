@@ -15,7 +15,7 @@
   var PANEL_TRIGGER = '{visual-mvu}';
   /* 每次改了注入文案/关键逻辑就把这个号 +1：刷新后看 Console 有没有打印这一版，
      能立刻知道「浏览器里跑的到底是不是新代码」。 */
-  var BUILD = '2026-10-05.13';
+  var BUILD = '2026-10-05.14';
   var GRID = 8;
   var MIN_W = 96, MIN_H = 56;
 
@@ -1498,7 +1498,7 @@ var TRASH_SVG =
 
     /* 点一下（没拖动）才打开设置；拖着挪位置/改大小时松手不弹（拖动会顺带触发 click） */
     card.addEventListener('click', function (e) {
-      if (Date.now() < suppressClickUntil) return;
+      if (suppressNextClick) { suppressNextClick = false; return; }
       if (e.target.closest && e.target.closest('.vm-card-gear')) return;
       e.stopPropagation();
       openCardSettings(null, true, {
@@ -2383,9 +2383,11 @@ var TRASH_SVG =
    * 表现就是「取消一次后新建拖不出东西，只有一个点」。
    */
   var drag = { mode: null, sx: 0, sy: 0, ox: 0, oy: 0, ow: 0, oh: 0, id: null, cfg: null, dir: '', draft: null, alt: false, moved: false };
-  /* 拖动 / 缩放结束后的这段时间里，忽略跟着冒出来的 click
-     （不然拖完一张「未设置」的卡片、松手就会弹出设置界面） */
-  var suppressClickUntil = 0;
+  /* 拖动 / 缩放结束后，紧接着冒出来的那个 click 不算「点一下」
+     （不然拖完一张「未设置」的卡片、松手就会弹出设置界面）。
+     用布尔标记而不是时间窗口：酒馆里 saveLayout() 可能要几百毫秒，
+     时间窗口很容易在 click 真正派发之前就过期。 */
+  var suppressNextClick = false;
   var DOC_BOUND = false;
 
   /* 鼠标事件按帧合并：一帧最多算一次，拖动才跟手 */
@@ -2520,7 +2522,7 @@ var TRASH_SVG =
 
     /* 清空状态（先清，避免弹窗操作期间被再次触发） */
     if ((mode === 'move' || mode === 'resize') && drag.moved) {
-      suppressClickUntil = Date.now() + 200;      /* 拖过了 → 松手别弹设置（click 紧跟 mouseup，200ms 足够） */
+      suppressNextClick = true;                   /* 拖过了 → 松手冒出来的那个 click 忽略掉 */
     }
     drag.mode = null; drag.draft = null; drag.id = null; drag.cfg = null; drag.dir = '';
     drag.alt = false; drag.moved = false;
@@ -2566,6 +2568,7 @@ var TRASH_SVG =
       if (e.target.closest && e.target.closest('.vm-card')) return;
       /* 正在就地改数值（或刚点空白退出改值）：这一下只算「退出编辑」，
          不要顺手拖出一个新的变量区 —— 以前点空白会把草稿框拖出来、松手就多一张卡。 */
+      suppressNextClick = false;
       if (S.editingId) { exitEditMode(); return; }
       if (Date.now() - (S.editExitedAt || 0) < 350) return;
       var r = canvas.getBoundingClientRect();
@@ -2616,6 +2619,7 @@ var TRASH_SVG =
   function startMove(e, id, cfg) {
     var card = S.layer && S.layer.querySelector('.vm-card[data-id="' + id + '"]');
     if (!card) return;
+    suppressNextClick = false;              /* 新一轮按下：把上一次的「忽略点击」标记清掉 */
     card.classList.add('vm-dragging');
     card.style.willChange = 'transform';   /* 拖动期间提升成合成层 */
     altHint.lastMove = 0;
@@ -2633,6 +2637,7 @@ var TRASH_SVG =
   function startResize(e, id, cfg, dir) {
     var card = S.layer && S.layer.querySelector('.vm-card[data-id="' + id + '"]');
     if (!card) return;
+    suppressNextClick = false;
     altHint.lastMove = 0;
     drag.alt = false;
     drag.moved = false;
