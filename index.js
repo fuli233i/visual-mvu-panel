@@ -64,6 +64,65 @@
 
   /* 把正文里的标记换成隐藏 span：界面上看不见，但 textContent 里还在，
      所以下一次扫描仍然认得出这一楼该挂面板。 */
+  /* MVU 的指令块：很多卡自带正则把它们藏起来，没有卡帮忙时就会原样露在正文里。
+     这里由扩展自己兜底隐藏（不动正文数据，只是不显示）。 */
+  var CODE_PATTERNS = [
+    /<UpdateVariable[\s\S]*?<\/UpdateVariable>/i,
+    /<JSONPatch[\s\S]*?<\/JSONPatch>/i,
+    /<StatusPlaceHolderImpl\s*\/?>/i
+  ];
+
+  function maskCodeBlocksIn(text) {
+    var nodes = [];
+    var walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT, null);
+    var n;
+    while ((n = walker.nextNode())) {
+      var p = n.parentNode;
+      if (!p) continue;
+      if (p.closest && (p.closest('.vmvu-code') || p.closest('#' + ROOT_ID))) continue;
+      var v = n.nodeValue || '';
+      for (var i = 0; i < CODE_PATTERNS.length; i++) {
+        if (CODE_PATTERNS[i].test(v)) { nodes.push(n); break; }
+      }
+    }
+    nodes.forEach(function (node) {
+      var rest = node.nodeValue;
+      var frag = document.createDocumentFragment();
+      var hit = false;
+      while (rest) {
+        var best = null;
+        CODE_PATTERNS.forEach(function (re) {
+          var m = re.exec(rest);
+          if (m && m[0] && (!best || m.index < best.index)) best = m;
+        });
+        if (!best) break;
+        hit = true;
+        if (best.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, best.index)));
+        var span = document.createElement('span');
+        span.className = 'vmvu-code';
+        span.style.display = 'none';
+        span.textContent = best[0];
+        frag.appendChild(span);
+        rest = rest.slice(best.index + best[0].length);
+      }
+      if (!hit) return;
+      if (rest) frag.appendChild(document.createTextNode(rest));
+      node.parentNode.replaceChild(frag, node);
+    });
+    /* 被整段藏空的 <pre> / <code> 壳也收掉，免得留一个空框 */
+    var pres = text.querySelectorAll('pre');
+    for (var k = 0; k < pres.length; k++) {
+      var pre = pres[k];
+      var tw = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT, null);
+      var vis = '', x;
+      while ((x = tw.nextNode())) {
+        if (x.parentNode && x.parentNode.closest && x.parentNode.closest('.vmvu-code')) continue;
+        vis += x.nodeValue || '';
+      }
+      if (!vis.replace(/\s/g, '')) pre.style.display = 'none';
+    }
+  }
+
   function maskTriggerIn(text) {
     if (!HIDE_TRIGGER || !TRIGGER_PATTERNS.length) return;
     var nodes = [];
@@ -226,6 +285,7 @@
     /* 已经注入过：同一楼只刷新，不重复插入 */
     if (exist && exist.getAttribute('data-vmvu-floor') === String(messageId)) {
       maskTriggerIn(text);
+      maskCodeBlocksIn(text);
       var liveChanged = syncLiveFlag(exist, messageId, liveId);
       if (window.VMVU) {
         try {
@@ -259,6 +319,7 @@
     /* 插在消息正文后面 */
     text.appendChild(host);
     maskTriggerIn(text);
+      maskCodeBlocksIn(text);
 
     if (!window.VMVU) { warn('面板脚本还没加载完'); return false; }
 
