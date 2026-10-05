@@ -355,6 +355,9 @@
       if (!isFinite(mid)) return;
       if (mes.getAttribute('is_user') === 'true') return;
       if (mes.getAttribute('is_system') === 'true') return;
+      /* 隐藏 MVU 指令块：每层都要做，跟挂不挂面板无关 */
+      var txAll = mes.querySelector('.mes_text');
+      if (txAll) maskCodeBlocksIn(txAll);
       candidates.push({ mes: mes, mid: mid });
     });
     var keep = {};
@@ -365,6 +368,9 @@
       if (!isFinite(mid)) return;
       if (mes.getAttribute('is_user') === 'true') return;
       if (mes.getAttribute('is_system') === 'true') return;
+      /* 隐藏 MVU 指令块：每层都要做，跟挂不挂面板无关 */
+      var txAll = mes.querySelector('.mes_text');
+      if (txAll) maskCodeBlocksIn(txAll);
       /* 超出「最近几层」的：把已经挂上的面板摘掉，不占 DOM */
       if (!keep[mid]) {
         var old = mes.querySelector('#' + ROOT_ID);
